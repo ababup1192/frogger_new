@@ -1,0 +1,81 @@
+// Engine module — shared types and effects for the game engine layer
+
+mod Engine {
+    import java.lang.ProcessBuilder
+    import java.lang.System
+    import java.util.ArrayList
+
+    /// テクスチャアセットのマニフェストエントリ
+    pub type alias TextureEntry = { name = String, path = String, hasAlpha = Bool }
+
+    /// テクスチャ情報: GPU ハンドル ID + 元画像サイズ
+    pub type alias TextureInfo = { id = Int32, width = Float32, height = Float32 }
+
+    /// テクスチャの論理名 → TextureInfo
+    pub type alias TextureRegistry = Map[String, TextureInfo]
+
+    /// エンジン初期化に必要な設定
+    pub type alias EngineConfig = {
+        screenWidth = Int32,
+        screenHeight = Int32,
+        title = String,
+        textureManifest = List[TextureEntry],
+        clearColor = Color
+    }
+
+    /// 描画用データ: render ハンドラに渡す
+    pub type alias Drawable = {
+        texture = String,
+        position = Vec2.Vec2,
+        scale = Vec2.Vec2,
+        rotation = Float32,
+        color = Color,
+        centered = Bool,
+        uvOffset = Vec2.Vec2,
+        uvScale = Vec2.Vec2,
+        zIndex = Int32
+    }
+
+    /// ノードを Drawable に変換する能力を表す trait
+    pub trait Renderable[n] {
+        pub def toDrawable(node: n, globalPos: Vec2.Vec2): Drawable
+    }
+
+    /// ゲームエフェクト: 描画・ウィンドウ制御・時間取得
+    pub eff Game {
+        def render(drawables: List[Drawable]): Unit
+        def shouldClose(): Bool
+        def getDeltaTime(): Float32
+    }
+
+    /// macOS では -XstartOnFirstThread 付きでプロセスを再起動する。
+    /// 再起動した場合 true を返す（呼び出し元は終了すべき）。
+    pub def ensureMainThread(): Bool \ IO =
+        let osName = System.getProperty("os.name");
+        if (Object.isNull(osName) or not String.contains({substr = "Mac"}, osName))
+            false
+        else if (not Object.isNull(System.getProperty("game.relaunched")))
+            false
+        else {
+            println("Relaunching with -XstartOnFirstThread...");
+            let javaHome = System.getProperty("java.home");
+            let javaBin = "${javaHome}/bin/java";
+            let args = new ArrayList();
+            discard args.add(javaBin);
+            discard args.add("-XstartOnFirstThread");
+            discard args.add("-Dgame.relaunched=true");
+            let projectPath = System.getProperty("projectPath");
+            if (not Object.isNull(projectPath))
+                discard args.add("-DprojectPath=${projectPath}")
+            else ();
+            discard args.add("-jar");
+            discard args.add("bin/flix.jar");
+            discard args.add("run");
+            let pb = new ProcessBuilder(args);
+            discard pb.inheritIO();
+            let proc = pb.start();
+            let code = proc.waitFor();
+            System.exit(code);
+            true
+        }
+}
