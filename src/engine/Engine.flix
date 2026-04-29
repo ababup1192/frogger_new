@@ -8,6 +8,9 @@ mod Engine {
     /// テクスチャアセットのマニフェストエントリ
     pub type alias TextureEntry = { name = String, path = String, hasAlpha = Bool }
 
+    /// フォントアセットのマニフェストエントリ
+    pub type alias FontEntry = { name = String, path = String, fontSize = Float32 }
+
     /// テクスチャ情報: GPU ハンドル ID + 元画像サイズ
     pub type alias TextureInfo = { id = Int32, width = Float32, height = Float32 }
 
@@ -20,6 +23,7 @@ mod Engine {
         screenHeight = Int32,
         title = String,
         textureManifest = List[TextureEntry],
+        fontManifest = List[FontEntry],
         clearColor = Color
     }
 
@@ -36,9 +40,10 @@ mod Engine {
         zIndex = Int32
     }
 
-    /// ノードを Drawable に変換する能力を表す trait
+    /// ノードを Drawable のリストに変換する能力を表す trait
+    /// Label2D 等、1 ノードから複数 Drawable を生成するケースに対応
     pub trait Renderable[n] {
-        pub def toDrawable(node: n, globalPos: Vec2.Vec2): Drawable
+        pub def toDrawables(node: n, globalPos: Vec2.Vec2): List[Drawable]
     }
 
     /// キーボードキー（Frogger で使用するキーのみ）
@@ -55,12 +60,13 @@ mod Engine {
         case Escape
     }
 
-    /// ゲームエフェクト: 描画・ウィンドウ制御・時間取得・キー入力
+    /// ゲームエフェクト: 描画・ウィンドウ制御・時間取得・キー入力・フォント
     pub eff Game {
         def render(drawables: List[Drawable]): Unit
         def shouldClose(): Bool
         def getDeltaTime(): Float32
         def isKeyPressed(key: Key): Bool
+        def getFontAtlas(name: String): FontAtlas
     }
 
     /// macOS では -XstartOnFirstThread 付きでプロセスを再起動する。

@@ -27,15 +27,19 @@ def main(): Unit \ IO =
                 {name = "Home", path = "textures/Home.png", hasAlpha = true} ::
                 {name = "HomeFrog", path = "textures/HomeFrog.png", hasAlpha = true} ::
                 Nil,
+            fontManifest =
+                {name = "default", path = "textures/Xolonium-Regular.ttf", fontSize = 32.0f32} ::
+                Nil,
             clearColor = {r = 0.1f32, g = 0.1f32, b = 0.1f32}
         };
         LwjglLayer.withLwjgl(config, () -> {
-            gameLoop(Game.initGameState())
+            let fontAtlas = Engine.Game.getFontAtlas("default");
+            gameLoop(fontAtlas, Game.initGameState(fontAtlas))
         })
     }
 
-/// メインループ: 入力 → process → プラットフォーム乗り → ホーム判定 → 死亡判定 → タイマー
-def gameLoop(state: Game.GameState): Unit \ Engine.Game =
+/// メインループ: 入力 → process → プラットフォーム乗り → ホーム判定 → 死亡判定 → タイマー → HUD
+def gameLoop(fontAtlas: FontAtlas, state: Game.GameState): Unit \ Engine.Game =
     if (Engine.Game.shouldClose()) ()
     else {
         let dt = Engine.Game.getDeltaTime();
@@ -46,19 +50,22 @@ def gameLoop(state: Game.GameState): Unit \ Engine.Game =
             // ゲームオーバーまたは勝利時は Enter でリスタート
             if ((Game.isGameOver(state) or Game.allHomesFilled(state#scene))
                 and Set.memberOf(Engine.Key.Enter, justPressed))
-                gameLoop(Game.resetGame())
+                gameLoop(fontAtlas, Game.resetGame(fontAtlas))
             else if (Game.isGameOver(state) or Game.allHomesFilled(state#scene)) {
                 // ゲーム停止中もシーンは描画する
                 let (newScene, newOverlaps) =
                     GameEngine.updateWithAreaHandler(dt, true, state#prevOverlaps, state#scene);
-                gameLoop({scene = newScene, prevKeys = currKeys, prevOverlaps = newOverlaps | state})
+                let finalState = {scene = newScene, prevKeys = currKeys, prevOverlaps = newOverlaps | state}
+                    |> Game.updateHUD;
+                gameLoop(fontAtlas, finalState)
             } else if (state#isDead) {
                 // 死亡中: 入力を無視し、シーンは動かし続ける（車両・丸太は移動）
                 let (newScene, newOverlaps) =
                     GameEngine.updateWithAreaHandler(dt, false, state#prevOverlaps, state#scene);
                 let finalState = {scene = newScene, prevKeys = currKeys, prevOverlaps = newOverlaps | state}
-                    |> Game.updateDeathTimer(dt);
-                gameLoop(finalState)
+                    |> Game.updateDeathTimer
+                    |> Game.updateHUD;
+                gameLoop(fontAtlas, finalState)
             } else {
                 // 通常プレイ
                 let inputState = state
@@ -70,8 +77,9 @@ def gameLoop(state: Game.GameState): Unit \ Engine.Game =
                     |> Game.tryFillHomeSlot
                     |> Game.checkDeath
                     |> Game.checkDrown
-                    |> Game.updateGameTimer(dt);
-                gameLoop(finalState)
+                    |> Game.updateGameTimer
+                    |> Game.updateHUD;
+                gameLoop(fontAtlas, finalState)
             }
         }
     }

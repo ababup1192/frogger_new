@@ -353,14 +353,17 @@ pub mod Scene {
         }
 
     /// 可視ノードを Drawable のリストに変換する
+    /// 各ノードが複数 Drawable を返せるよう flatMap ベースで処理する
     pub def toDrawables(scene: Scene[n]): List[Engine.Drawable] with Node2D[n], Order[n], Engine.Renderable[n] =
         preorderPaths(scene)
-            |> List.filterMap(path ->
-                getAt(path, scene) |> Option.flatMap(node ->
-                    if (CanvasItem.isVisible(node))
-                        Some(Engine.Renderable.toDrawable(node, globalPositionAt(path, scene)))
-                    else None
-                )
+            |> List.flatMap(path ->
+                match getAt(path, scene) {
+                    case Some(node) =>
+                        if (CanvasItem.isVisible(node))
+                            Engine.Renderable.toDrawables(node, globalPositionAt(path, scene))
+                        else Nil
+                    case None => Nil
+                }
             )
             |> List.sortBy(d -> d#zIndex)
 }

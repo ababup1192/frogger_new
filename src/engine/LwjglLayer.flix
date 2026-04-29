@@ -9,10 +9,15 @@ mod LwjglLayer {
     import org.lwjgl.opengl.GL15
     import org.lwjgl.opengl.GL20
     import org.lwjgl.opengl.GL30
+    import org.lwjgl.opengl.GL33
     import org.lwjgl.stb.STBImage
+    import org.lwjgl.stb.STBTruetype
+    import org.lwjgl.stb.STBTTBakedChar
+    import org.lwjgl.BufferUtils
     import org.lwjgl.system.MemoryStack
     import org.lwjgl.system.MemoryUtil
     import java.lang.System
+    import java.io.FileInputStream
 
     // ========================================================================
     // Shader Sources
@@ -199,6 +204,89 @@ mod LwjglLayer {
         GL30.glBindVertexArray(0)
 
     // ========================================================================
+    // Font Atlas Baking (STBTruetype)
+    // ========================================================================
+
+    def bakeFontAtlas(entry: Engine.FontEntry): (FontAtlas, Engine.TextureInfo) \ IO =
+        let bitmapSize = 512;
+        let charCount = 96;   // ASCII 32-127
+        let firstChar = 32;
+
+        // フォントファイルを ByteBuffer に読み込む
+        let fis = new FileInputStream(entry#path);
+        let fontBytes = fis.readAllBytes();
+        fis.close();
+        let fontBuffer = BufferUtils.createByteBuffer(Array.length(fontBytes));
+        discard fontBuffer.put(fontBytes);
+        discard fontBuffer.flip();
+
+        // STBTruetype でフォントを焼き込む
+        let cdata = STBTTBakedChar.malloc(charCount);
+        let bitmap = BufferUtils.createByteBuffer(bitmapSize * bitmapSize);
+        discard STBTruetype.stbtt_BakeFontBitmap(fontBuffer, entry#fontSize, bitmap, bitmapSize, bitmapSize, firstChar, cdata);
+
+        // GL_RED テクスチャとしてアップロード + swizzle で RGBA 化
+        discard bitmap.position(0);
+        let texId = GL11.glGenTextures();
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, texId);
+        GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_R8, bitmapSize, bitmapSize, 0, GL11.GL_RED, GL11.GL_UNSIGNED_BYTE, bitmap);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
+        // Swizzle: (ONE, ONE, ONE, RED) → 白色テキスト + alpha = グレースケール値
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL33.GL_TEXTURE_SWIZZLE_R, GL11.GL_ONE);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL33.GL_TEXTURE_SWIZZLE_G, GL11.GL_ONE);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL33.GL_TEXTURE_SWIZZLE_B, GL11.GL_ONE);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL33.GL_TEXTURE_SWIZZLE_A, GL11.GL_RED);
+
+        // グリフメトリクスを構築（静的アクセサで各フィールドを取得）
+        let bitmapSizeF = Int32.toFloat32(bitmapSize);
+        let baseAddr = cdata.address();
+        let structSize = 20i64;   // STBTTBakedChar: 4 shorts (8B) + 3 floats (12B) = 20B
+        let glyphs = List.range(0, charCount) |> List.foldLeft((acc, i) -> {
+            let cp = firstChar + i;
+            let addr = baseAddr + Int32.toInt64(i) * structSize;
+            let x0 = Int32.toFloat32(Int16.toInt32(STBTTBakedChar.nx0(addr)));
+            let y0 = Int32.toFloat32(Int16.toInt32(STBTTBakedChar.ny0(addr)));
+            let x1 = Int32.toFloat32(Int16.toInt32(STBTTBakedChar.nx1(addr)));
+            let y1 = Int32.toFloat32(Int16.toInt32(STBTTBakedChar.ny1(addr)));
+            let gm: TextLayout.GlyphMetrics = {
+                xOff = STBTTBakedChar.nxoff(addr),
+                yOff = STBTTBakedChar.nyoff(addr),
+                glyphW = x1 - x0,
+                glyphH = y1 - y0,
+                advance = STBTTBakedChar.nxadvance(addr),
+                s0 = x0 / bitmapSizeF,
+                t0 = y0 / bitmapSizeF,
+                s1 = x1 / bitmapSizeF,
+                t1 = y1 / bitmapSizeF
+            };
+            Map.insert(cp, gm, acc)
+        }, Map.empty());
+
+        cdata.free();
+
+        let texName = "font_${entry#name}";
+        let texInfo: Engine.TextureInfo = { id = texId, width = bitmapSizeF, height = bitmapSizeF };
+        let atlas: FontAtlas = {
+            textureName = texName,
+            fontSize = entry#fontSize,
+            textureSize = bitmapSizeF,
+            glyphs = glyphs
+        };
+        (atlas, texInfo)
+
+    def bakeFontAtlases(manifest: List[Engine.FontEntry],
+                        registry: Engine.TextureRegistry): (Map[String, FontAtlas], Engine.TextureRegistry) \ IO =
+        List.foldLeft((acc, entry) -> {
+            let (atlases, reg) = acc;
+            let (atlas, texInfo) = bakeFontAtlas(entry);
+            println("  Font '${entry#name}' baked (${atlas#textureName})");
+            let newAtlases = Map.insert(entry#name, atlas, atlases);
+            let newReg = Map.insert(atlas#textureName, texInfo, reg);
+            (newAtlases, newReg)
+        }, (Map.empty(), registry), manifest)
+
+    // ========================================================================
     // LWJGL Handler for Engine.Game effect
     // ========================================================================
 
@@ -241,7 +329,10 @@ mod LwjglLayer {
         let (vao, _vbo) = initSpriteRenderer();
 
         println("Loading textures...");
-        let registry = loadTextureRegistry(config#textureManifest);
+        let registry0 = loadTextureRegistry(config#textureManifest);
+
+        println("Baking font atlases...");
+        let (fontAtlases, registry) = bakeFontAtlases(config#fontManifest, registry0);
 
         let timeHolder = Array#{System.nanoTime()} @ Static;
 
@@ -283,6 +374,12 @@ mod LwjglLayer {
             def isKeyPressed(key, k) = {
                 let code = keyToGlfw(key);
                 k(GLFW.glfwGetKey(window, code) == 1)
+            }
+            def getFontAtlas(name, k) = {
+                match Map.get(name, fontAtlases) {
+                    case Some(atlas) => k(atlas)
+                    case None => bug!("Font atlas not found: ${name}")
+                }
             }
         };
 
