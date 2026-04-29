@@ -1,14 +1,16 @@
 // Game — Frogger ゲーム専用の GameNode 定義とシーン構築・ゲームロジック
 
-/// タイマーの種別
-pub enum TimerKind with Eq {
-    case GameTimerKind
-    case DeathTimerKind
+pub type alias GameState = {
+    scene = Scene[GameNode],
+    gameTimer = Timer,
+    deathTimer = Timer,
+    lives = Int32,
+    isDead = Bool
 }
 
 pub enum GameNode {
     /// プレイヤー（CharacterBody2D）
-    case Player({body = CharacterBody2D, prevKeys = Set[Engine.Key]})
+    case Player({body = CharacterBody2D, prevKeys = Set[Engine.Key], target = Vec2.Vec2})
     /// 車両（Area2D + 水平速度）
     case Vehicle({area = Area2D, vx = Float32})
     /// 丸太プラットフォーム（Area2D + 水平速度 + プラットフォーム幅）
@@ -23,72 +25,24 @@ pub enum GameNode {
     case TurtlePlatform({area = Area2D, vx = Float32, platformWidth = Float32})
     /// プレイヤー当たり判定（Area2D）
     case PlayerHitbox(Area2D)
-    /// 位置マーカー（ターゲット位置等の参照点）
-    case Marker2DNode(Marker2D)
-    /// タイマー（TimerKind で種別を区別）
-    case TimerNode({kind = TimerKind, timer = Timer})
     /// テキストラベル（HUD 表示）
     case Label2DNode(Label2D)
-    /// ゲーム管理（残機・死亡フラグ）
-    case GameManager({lives = Int32, isDead = Bool})
 }
 
 // ── Node 実装 ──
 
 instance Node[GameNode] {
-    redef ready(self: GameNode, _path: NodePath, scene: Scene[GameNode]): (GameNode, Scene[GameNode]) =
-        match self {
-            case GameNode.TimerNode(r) =>
-                (GameNode.TimerNode({timer = Timer.ready(r#timer) | r}), scene)
-            case _ => (self, scene)
-        }
-
-    redef isTimedOut(self: GameNode): Bool = match self {
-        case GameNode.TimerNode(r) => Timer.isTimedOut(r#timer)
-        case _ => false
-    }
-
-    redef clearTimedOut(self: GameNode): GameNode = match self {
-        case GameNode.TimerNode(r) => GameNode.TimerNode({timer = Timer.clearTimedOut(r#timer) | r})
-        case other => other
-    }
-
     redef process(delta: Float64, self: GameNode, _path: NodePath,
                     scene: Scene[GameNode]): (GameNode, Scene[GameNode]) \ Engine.Game =
         let dt = Float64.truncateToFloat32(delta);
-        match self {
-            // Player: 入力読み取り → ターゲット更新 → moveToward
+        checked_ecast(match self {
+            // Player: moveToward 物理のみ（入力は handlePlayerInput で処理）
             case GameNode.Player(r) =>
-                let currKeys = Game.collectPressedKeys();
-                let isDead = Game.getGameManager(scene)#isDead;
-                let scene1 = if (isDead) scene
-                else {
-                    let justPressed = Game.justPressedKeys(currKeys, r#prevKeys);
-                    match Game.inputDirection(justPressed) {
-                        case None => scene
-                        case Some(dir) =>
-                            let currentTarget = Game.getPlayerTarget(scene);
-                            let newTarget = Vec2.clamp(
-                                Vec2.add(currentTarget, Vec2.mul(dir, Game.tileSize())),
-                                Game.playerMin(), Game.playerMax());
-                            let s1 = Scene.mapAt("playerTarget" :: Nil, node -> match node {
-                                case GameNode.Marker2DNode(m) =>
-                                    GameNode.Marker2DNode(Node2D.setPosition(newTarget, m))
-                                case other => other
-                            }, scene);
-                            Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
-                                case GameNode.AnimSpriteNode(sprite) =>
-                                    GameNode.AnimSpriteNode(Node2D.setRotation(Game.directionToRotation(dir), sprite))
-                                case other => other
-                            }, s1)
-                    }
-                };
                 let currentPos = Node2D.getPosition(r#body);
                 let speed = CharacterBody2D.getMoveSpeed(r#body);
-                let targetPos = Game.getPlayerTarget(scene1);
-                let newPos = Vec2.moveToward(currentPos, targetPos, speed * dt);
+                let newPos = Vec2.moveToward(currentPos, r#target, speed * dt);
                 let newBody = Node2D.setPosition(newPos, r#body);
-                (GameNode.Player({body = newBody, prevKeys = currKeys}), scene1)
+                (GameNode.Player({body = newBody | r}), scene)
             // Vehicle: 水平方向に移動し、画面外でラップ
             case GameNode.Vehicle(r) =>
                 let pos = Node2D.getPosition(r#area);
@@ -110,29 +64,8 @@ instance Node[GameNode] {
             // AnimSpriteNode: フレームを進める
             case GameNode.AnimSpriteNode(sprite) =>
                 (GameNode.AnimSpriteNode(AnimatedSprite2D.advanceFrame(dt, sprite)), scene)
-            // TimerNode: カウントダウン処理
-            case GameNode.TimerNode(r) =>
-                (GameNode.TimerNode({timer = Timer.process(dt, r#timer) | r}), scene)
             case _ => (self, scene)
-        }
-}
-
-// ── TimerHandler 実装 ──
-instance TimerEvent.TimerHandler[GameNode] {
-    redef onTimeout(_timerPath: NodePath, timer: GameNode, scene: Scene[GameNode]): Scene[GameNode] =
-        match timer {
-            case GameNode.TimerNode(tr) if tr#kind == TimerKind.GameTimerKind =>
-                // deathTimer が既に動いていれば何もしない（衝突死亡中）
-                match Scene.get("deathTimer", scene) {
-                    case Some(GameNode.TimerNode(dt)) if Timer.isRunning(dt#timer) => scene
-                    case _ =>
-                        Game.playDeathAnim({r = 1.0f32, g = 1.0f32, b = 0.2f32}, scene)
-                            |> Game.startDeathTimer
-                }
-            case GameNode.TimerNode(tr) if tr#kind == TimerKind.DeathTimerKind =>
-                Game.respawnPlayerScene(scene)
-            case _ => scene
-        }
+        })
 }
 
 // ── AreaHandler 実装 ──
@@ -209,30 +142,11 @@ mod Game {
     def startZoneY(): Float32 = 832.0f32
     def startZoneH(): Float32 = 64.0f32
 
-    // ========================================================================
-    // GameManager ヘルパー
-    // ========================================================================
-
-    def gameManagerKey(): String = "gameManager"
-
-    pub def getGameManager(scene: Scene[GameNode]): {lives = Int32, isDead = Bool} =
-        match Scene.get(gameManagerKey(), scene) {
-            case Some(GameNode.GameManager(r)) => r
-            case _ => bug!("gameManager not found")
-        }
-
-    pub def mapGameManager(f: {lives = Int32, isDead = Bool} -> {lives = Int32, isDead = Bool},
-                           scene: Scene[GameNode]): Scene[GameNode] =
-        Scene.mapAt(gameManagerKey() :: Nil, node -> match node {
-            case GameNode.GameManager(r) => GameNode.GameManager(f(r))
-            case other => other
-        }, scene)
-
-    /// Frogger の初期シーンを構築する
-    pub def buildScene(fontAtlas: FontAtlas): Scene[GameNode] =
+    /// Frogger の初期状態を構築する
+    pub def buildState(fontAtlas: FontAtlas): GameState =
         let green: Color = {r = 0.2f32, g = 0.55f32, b = 0.15f32};
         let sw = screenW();
-        Scene.empty()
+        let scene = Scene.empty()
             // ── 背景ゾーン (zIndex=-10: 最背面) ──
             |> Scene.addNode("bgHome",
                 makeSolidBg(green, {x = 0.0f32, y = homeZoneY()},
@@ -255,11 +169,9 @@ mod Game {
             |> Scene.addNode("player",
                 GameNode.Player({
                     body = CanvasItem.hide(CharacterBody2D.make(playerStart(), moveSpeed = moveSpeed())),
-                    prevKeys = Set.empty()
+                    prevKeys = Set.empty(),
+                    target = playerStart()
                 }))
-            // ── プレイヤーのターゲット位置（Marker2D） ──
-            |> Scene.addNode("playerTarget",
-                GameNode.Marker2DNode(Marker2D.make(playerStart())))
             |> Scene.addChild("player", "Sprite",
                 GameNode.AnimSpriteNode(
                     AnimatedSprite2D.make(
@@ -282,13 +194,6 @@ mod Game {
             |> addAllLogs
             // ── 亀 ──
             |> addAllTurtles
-            // ── Timer ノード ──
-            |> Scene.addNode("gameTimer",
-                GameNode.TimerNode({kind = TimerKind.GameTimerKind,
-                    timer = Timer.make(30.0f32) |> Timer.setAutostart(true)}))
-            |> Scene.addNode("deathTimer",
-                GameNode.TimerNode({kind = TimerKind.DeathTimerKind,
-                    timer = Timer.make(2.0f32)}))
             // ── HUD Label ──
             |> Scene.addNode("timerLabel",
                 GameNode.Label2DNode(
@@ -299,10 +204,14 @@ mod Game {
                 GameNode.Label2DNode(
                     Label2D.make("LIVES: 3", fontAtlas, 24.0f32)
                         |> Node2D.setPosition({x = 10.0f32, y = 940.0f32})
-                        |> CanvasItem.setZIndex(10)))
-            // ── GameManager ──
-            |> Scene.addNode("gameManager",
-                GameNode.GameManager({lives = 3, isDead = false}))
+                        |> CanvasItem.setZIndex(10)));
+        {
+            scene = scene,
+            gameTimer = Timer.make(30.0f32) |> Timer.setAutostart(true) |> Timer.ready,
+            deathTimer = Timer.make(2.0f32),
+            lives = 3,
+            isDead = false
+        }
 
     // ========================================================================
     // GameNode ヘルパー
@@ -626,9 +535,9 @@ mod Game {
     // ホームスロット判定
     // ========================================================================
 
-    pub def tryFillHomeSlot(state: Scene[GameNode]): Scene[GameNode] =
-        let target = getPlayerTarget(state);
-        let playerPos = Scene.globalPosition("player", state);
+    pub def tryFillHomeSlot(state: GameState): GameState =
+        let target = getPlayerTarget(state#scene);
+        let playerPos = Scene.globalPosition("player", state#scene);
         let arrived = Vec2.distanceTo(playerPos, target) < 2.0f32;
         if (not arrived or target#y >= homeZoneY() + homeZoneH()) state
         else {
@@ -637,7 +546,7 @@ mod Game {
                 |> List.foldLeft((best, pair) -> {
                     let (idx, slotX) = pair;
                     let slotName = "home${idx}";
-                    match Scene.get(slotName, state) {
+                    match Scene.get(slotName, state#scene) {
                         case Some(GameNode.HomeSlot(r)) =>
                             if (r#filled) best
                             else {
@@ -655,23 +564,18 @@ mod Game {
             match result {
                 case None => state
                 case Some((_idx, slotName, _dist)) =>
-                    Scene.mapAt(slotName :: Nil, node -> match node {
+                    let newScene = Scene.mapAt(slotName :: Nil, node -> match node {
                         case GameNode.HomeSlot(r) =>
                             GameNode.HomeSlot({filled = true | r})
                         case other => other
-                    }, state)
+                    }, state#scene)
                         |> Scene.mapAt(slotName :: "sprite" :: Nil, node -> match node {
                             case GameNode.SpriteNode(sprite) =>
                                 GameNode.SpriteNode(Sprite2D.setTexture("HomeFrog", sprite))
                             case other => other
                         })
-                        |> resetPlayerPosition
-                        // ゲームタイマーをリスタート
-                        |> Scene.mapAt("gameTimer" :: Nil, node -> match node {
-                            case GameNode.TimerNode(r) =>
-                                GameNode.TimerNode({timer = Timer.start(r#timer) | r})
-                            case other => other
-                        })
+                        |> resetPlayerPosition;
+                    { scene = newScene, gameTimer = Timer.start(state#gameTimer) | state }
             }
         }
 
@@ -724,9 +628,53 @@ mod Game {
         else -1.5707963267949
 
     pub def getPlayerTarget(scene: Scene[GameNode]): Vec2.Vec2 =
-        match Scene.get("playerTarget", scene) {
-            case Some(GameNode.Marker2DNode(m)) => Node2D.getPosition(m)
+        match Scene.get("player", scene) {
+            case Some(GameNode.Player(r)) => r#target
             case _ => playerStart()
+        }
+
+    // ========================================================================
+    // プレイヤー入力処理
+    // ========================================================================
+
+    pub def handlePlayerInput(state: GameState): GameState \ Engine.Game =
+        match Scene.get("player", state#scene) {
+            case Some(GameNode.Player(r)) =>
+                let currKeys = collectPressedKeys();
+                if (state#isDead) {
+                    let newScene = Scene.mapAt("player" :: Nil, node -> match node {
+                        case GameNode.Player(pr) => GameNode.Player({prevKeys = currKeys | pr})
+                        case other => other
+                    }, state#scene);
+                    { scene = newScene | state }
+                }
+                else {
+                    let justPressed = justPressedKeys(currKeys, r#prevKeys);
+                    match inputDirection(justPressed) {
+                        case None =>
+                            let newScene = Scene.mapAt("player" :: Nil, node -> match node {
+                                case GameNode.Player(pr) => GameNode.Player({prevKeys = currKeys | pr})
+                                case other => other
+                            }, state#scene);
+                            { scene = newScene | state }
+                        case Some(dir) =>
+                            let nt = Vec2.clamp(
+                                Vec2.add(r#target, Vec2.mul(dir, tileSize())),
+                                playerMin(), playerMax());
+                            let newScene = Scene.mapAt("player" :: Nil, node -> match node {
+                                case GameNode.Player(pr) =>
+                                    GameNode.Player({prevKeys = currKeys, target = nt | pr})
+                                case other => other
+                            }, state#scene)
+                                |> Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
+                                    case GameNode.AnimSpriteNode(sprite) =>
+                                        GameNode.AnimSpriteNode(Node2D.setRotation(directionToRotation(dir), sprite))
+                                    case other => other
+                                });
+                            { scene = newScene | state }
+                    }
+                }
+            case _ => state
         }
 
     // ========================================================================
@@ -764,25 +712,19 @@ mod Game {
             },
             None, Scene.nodes(scene))
 
-    def applyPlatformRiding(dt: Float32, state: Scene[GameNode]): Scene[GameNode] =
-        match findPlatformVelocity(state) {
+    def applyPlatformRiding(dt: Float32, state: GameState): GameState =
+        match findPlatformVelocity(state#scene) {
             case None => state
             case Some(platformVx) =>
                 let shift: Vec2.Vec2 = {x = platformVx * dt, y = 0.0f32};
-                let scene1 = Scene.mapAt("player" :: Nil, node -> match node {
+                let newScene = Scene.mapAt("player" :: Nil, node -> match node {
                     case GameNode.Player(r) =>
                         let currentPos = Node2D.getPosition(r#body);
                         let newBody = Node2D.setPosition(Vec2.add(currentPos, shift), r#body);
-                        GameNode.Player({body = newBody | r})
+                        GameNode.Player({body = newBody, target = Vec2.add(r#target, shift) | r})
                     case other => other
-                }, state);
-                let scene2 = Scene.mapAt("playerTarget" :: Nil, node -> match node {
-                    case GameNode.Marker2DNode(m) =>
-                        let pos = Node2D.getPosition(m);
-                        GameNode.Marker2DNode(Node2D.setPosition(Vec2.add(pos, shift), m))
-                    case other => other
-                }, scene1);
-                scene2
+                }, state#scene);
+                { scene = newScene | state }
         }
 
     // ========================================================================
@@ -790,10 +732,9 @@ mod Game {
     // ========================================================================
 
     /// 死亡演出を開始する（アニメーション変更 + deathTimer 開始 + isDead フラグ設定）
-    pub def triggerDeath(color: Color, scene: Scene[GameNode]): Scene[GameNode] =
-        playDeathAnim(color, scene)
-            |> startDeathTimer
-            |> mapGameManager(r -> {isDead = true | r})
+    pub def triggerDeath(color: Color, state: GameState): GameState =
+        let newScene = playDeathAnim(color, state#scene);
+        { scene = newScene, deathTimer = Timer.start(state#deathTimer), isDead = true | state }
 
     pub def playDeathAnim(color: Color, scene: Scene[GameNode]): Scene[GameNode] =
         Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
@@ -805,34 +746,26 @@ mod Game {
             case other => other
         }, scene)
 
-    /// deathTimer を開始するヘルパー
-    pub def startDeathTimer(scene: Scene[GameNode]): Scene[GameNode] =
-        Scene.mapAt("deathTimer" :: Nil, node -> match node {
-            case GameNode.TimerNode(r) =>
-                GameNode.TimerNode({timer = Timer.start(r#timer) | r})
-            case other => other
-        }, scene)
-
-    pub def checkDeath(state: Scene[GameNode]): Scene[GameNode] =
-        match Scene.getAt("player" :: "Sprite" :: Nil, state) {
+    pub def checkDeath(state: GameState): GameState =
+        match Scene.getAt("player" :: "Sprite" :: Nil, state#scene) {
             case Some(GameNode.AnimSpriteNode(sprite)) =>
                 let color = CanvasItem.getModulate(sprite);
-                if (color#g < 0.5f32 and not getGameManager(state)#isDead)
+                if (color#g < 0.5f32 and not state#isDead)
                     triggerDeath({r = 1.0f32, g = 0.2f32, b = 0.2f32}, state)
                 else
                     state
             case _ => state
         }
 
-    pub def checkDrown(state: Scene[GameNode]): Scene[GameNode] =
-        if (getGameManager(state)#isDead) state
+    pub def checkDrown(state: GameState): GameState =
+        if (state#isDead) state
         else {
-            let target = getPlayerTarget(state);
-            let playerPos = Scene.globalPosition("player", state);
+            let target = getPlayerTarget(state#scene);
+            let playerPos = Scene.globalPosition("player", state#scene);
             let arrived = Vec2.distanceTo(playerPos, target) < 2.0f32;
             let inWater = target#y >= waterZoneY() and target#y < waterZoneY() + waterZoneH();
             if (arrived and inWater) {
-                match findPlatformVelocity(state) {
+                match findPlatformVelocity(state#scene) {
                     case Some(_) => state
                     case None =>
                         triggerDeath({r = 0.2f32, g = 0.2f32, b = 1.0f32}, state)
@@ -842,59 +775,52 @@ mod Game {
         }
 
     // ========================================================================
-    // 死亡タイマー・リスポーン・ゲームタイマー
+    // タイマー処理・リスポーン
     // ========================================================================
 
     /// プレイヤーとターゲットの位置をスタート地点にリセットする
     pub def resetPlayerPosition(scene: Scene[GameNode]): Scene[GameNode] =
         Scene.mapAt("player" :: Nil, node -> match node {
             case GameNode.Player(r) =>
-                GameNode.Player({body = Node2D.setPosition(playerStart(), r#body) | r})
+                GameNode.Player({body = Node2D.setPosition(playerStart(), r#body), target = playerStart() | r})
             case other => other
         }, scene)
-            |> Scene.mapAt("playerTarget" :: Nil, node -> match node {
-                case GameNode.Marker2DNode(m) =>
-                    GameNode.Marker2DNode(Node2D.setPosition(playerStart(), m))
-                case other => other
-            })
 
-    /// シーン変更のみのリスポーン（位置・アニメリセット、gameTimer 再開）
-    /// Scene[GameNode] の変更は applyTimeouts 側で行う
-    pub def respawnPlayerScene(scene: Scene[GameNode]): Scene[GameNode] =
-        resetPlayerPosition(scene)
-            |> Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
-                case GameNode.AnimSpriteNode(sprite) =>
-                    GameNode.AnimSpriteNode(
-                        sprite
-                            |> AnimatedSprite2D.play("idle")
-                            |> CanvasItem.setModulate({r = 1.0f32, g = 1.0f32, b = 1.0f32})
-                            |> Node2D.setRotation(0.0))
-                case other => other
-            })
-            |> Scene.mapAt("gameTimer" :: Nil, node -> match node {
-                case GameNode.TimerNode(r) =>
-                    GameNode.TimerNode({timer = Timer.start(r#timer) | r})
-                case other => other
-            })
+    /// タイマーのカウントダウンを進める
+    pub def processTimers(dt: Float32, state: GameState): GameState =
+        { gameTimer = Timer.process(dt, state#gameTimer),
+          deathTimer = Timer.process(dt, state#deathTimer) | state }
 
-    /// TimerHandler によるタイムアウト処理を適用し、Scene[GameNode] を更新する
-    pub def applyTimeouts(state: Scene[GameNode]): Scene[GameNode] =
-        let timedOutPaths = TimerEvent.detectTimeoutPaths(state);
-        let newScene = TimerEvent.handleTimeouts(state);
-        let finalScene = List.foldLeft((acc, path) ->
-            match Scene.getAt(path, state) {
-                case Some(GameNode.TimerNode(tr)) if tr#kind == TimerKind.GameTimerKind =>
-                    if (getGameManager(acc)#isDead) acc
-                    else mapGameManager(r -> {isDead = true | r}, acc)
-                case Some(GameNode.TimerNode(tr)) if tr#kind == TimerKind.DeathTimerKind =>
-                    mapGameManager(r -> {isDead = false, lives = r#lives - 1}, acc)
-                case _ => acc
-            },
-            newScene, timedOutPaths);
-        finalScene
+    /// タイムアウトを検出して処理する
+    pub def handleTimerTimeouts(state: GameState): GameState =
+        // gameTimer タイムアウト: deathTimer 動作中でなければ死亡演出 + deathTimer 開始
+        let state1 = if (Timer.isTimedOut(state#gameTimer)) {
+            let cleared = { gameTimer = Timer.clearTimedOut(state#gameTimer) | state };
+            if (Timer.isRunning(state#deathTimer)) cleared
+            else if (state#isDead) cleared
+            else triggerDeath({r = 1.0f32, g = 1.0f32, b = 0.2f32}, cleared)
+        } else state;
+        // deathTimer タイムアウト: リスポーン + lives-1
+        if (Timer.isTimedOut(state1#deathTimer)) {
+            let newScene = resetPlayerPosition(state1#scene)
+                |> Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
+                    case GameNode.AnimSpriteNode(sprite) =>
+                        GameNode.AnimSpriteNode(
+                            sprite
+                                |> AnimatedSprite2D.play("idle")
+                                |> CanvasItem.setModulate({r = 1.0f32, g = 1.0f32, b = 1.0f32})
+                                |> Node2D.setRotation(0.0))
+                    case other => other
+                });
+            { scene = newScene,
+              deathTimer = Timer.clearTimedOut(state1#deathTimer),
+              gameTimer = Timer.start(state1#gameTimer),
+              isDead = false,
+              lives = state1#lives - 1 }
+        } else state1
 
-    pub def isGameOver(state: Scene[GameNode]): Bool =
-        getGameManager(state)#lives <= 0
+    pub def isGameOver(state: GameState): Bool =
+        state#lives <= 0
 
 
     // ========================================================================
@@ -902,56 +828,58 @@ mod Game {
     // ========================================================================
 
     /// Timer / lives の値を Label2D テキストに反映する
-    def updateHUD(state: Scene[GameNode]): Scene[GameNode] =
-        let timeInt = match Scene.get("gameTimer", state) {
-            case Some(GameNode.TimerNode(r)) =>
-                Float64.truncateToInt32(Float32.toFloat64(Float32.max(0.0f32, Timer.getTimeLeft(r#timer))))
-            case _ => 0
-        };
+    def updateHUD(state: GameState): GameState =
+        let timeInt = Float64.truncateToInt32(
+            Float32.toFloat64(Float32.max(0.0f32, Timer.getTimeLeft(state#gameTimer))));
         let scene1 = Scene.mapAt("timerLabel" :: Nil, node -> match node {
             case GameNode.Label2DNode(label) =>
                 GameNode.Label2DNode(Label2D.setText("TIME: ${timeInt}", label))
             case other => other
-        }, state);
-        let livesCount = getGameManager(state)#lives;
+        }, state#scene);
         let scene2 = Scene.mapAt("livesLabel" :: Nil, node -> match node {
             case GameNode.Label2DNode(label) =>
-                GameNode.Label2DNode(Label2D.setText("LIVES: ${livesCount}", label))
+                GameNode.Label2DNode(Label2D.setText("LIVES: ${state#lives}", label))
             case other => other
         }, scene1);
-        scene2
+        { scene = scene2 | state }
 
     // ========================================================================
     // メインループ
     // ========================================================================
 
     pub def start(fontAtlas: FontAtlas): Unit \ Engine.Game =
-        gameLoop(fontAtlas,  buildScene(fontAtlas))
+        gameLoop(fontAtlas, buildState(fontAtlas))
 
-    def gameLoop(fontAtlas: FontAtlas, state: Scene[GameNode]): Unit \ Engine.Game =
+    def gameLoop(fontAtlas: FontAtlas, state: GameState): Unit \ Engine.Game =
         if (Engine.Game.shouldClose()) ()
         else if (Engine.Game.isKeyPressed(Engine.Key.Escape)) ()
         else {
             let dt = Engine.Game.getDeltaTime();
-            if ((isGameOver(state) or allHomesFilled(state))
+            if ((isGameOver(state) or allHomesFilled(state#scene))
                 and Engine.Game.isKeyPressed(Engine.Key.Enter))
-                gameLoop(fontAtlas, buildScene(fontAtlas))
-            else if (isGameOver(state) or allHomesFilled(state)) {
-                let finalState = GameEngine.updateWithAreaHandler(dt, true, state)
+                gameLoop(fontAtlas, buildState(fontAtlas))
+            else if (isGameOver(state) or allHomesFilled(state#scene)) {
+                let newScene = GameEngine.updateWithAreaHandler(dt, true, state#scene);
+                let finalState = { scene = newScene | state }
                     |> updateHUD;
                 gameLoop(fontAtlas, finalState)
-            } else if (getGameManager(state)#isDead) {
-                let finalState = GameEngine.updateWithAreaHandler(dt, false, state)
-                    |> applyTimeouts
+            } else if (state#isDead) {
+                let newScene = GameEngine.updateWithAreaHandler(dt, false, state#scene);
+                let finalState = { scene = newScene | state }
+                    |> processTimers(dt)
+                    |> handleTimerTimeouts
                     |> updateHUD;
                 gameLoop(fontAtlas, finalState)
             } else {
-                let finalState = GameEngine.updateWithAreaHandler(dt, false, state)
+                let newScene = GameEngine.updateWithAreaHandler(dt, false, state#scene);
+                let finalState = { scene = newScene | state }
+                    |> handlePlayerInput
+                    |> processTimers(dt)
                     |> applyPlatformRiding(dt)
                     |> tryFillHomeSlot
                     |> checkDeath
                     |> checkDrown
-                    |> applyTimeouts
+                    |> handleTimerTimeouts
                     |> updateHUD;
                 gameLoop(fontAtlas, finalState)
             }
@@ -968,10 +896,7 @@ instance CanvasItem[GameNode] {
         case GameNode.Player(r) => CanvasItem.isVisible(r#body)
         case GameNode.AnimSpriteNode(sprite) => CanvasItem.isVisible(sprite)
         case GameNode.SpriteNode(sprite) => CanvasItem.isVisible(sprite)
-        case GameNode.Marker2DNode(marker) => CanvasItem.isVisible(marker)
-        case GameNode.TimerNode(r) => CanvasItem.isVisible(r#timer)
         case GameNode.Label2DNode(label) => CanvasItem.isVisible(label)
-        case GameNode.GameManager(_) => false
         case _ => CanvasItem.isVisible(Game.getArea(node))
     }
     pub def setVisible(visible: Bool, node: GameNode): GameNode = match node {
@@ -979,20 +904,14 @@ instance CanvasItem[GameNode] {
             GameNode.Player({body = CanvasItem.setVisible(visible, r#body) | r})
         case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(CanvasItem.setVisible(visible, sprite))
         case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(CanvasItem.setVisible(visible, sprite))
-        case GameNode.Marker2DNode(marker) => GameNode.Marker2DNode(CanvasItem.setVisible(visible, marker))
-        case GameNode.TimerNode(r) => GameNode.TimerNode({timer = CanvasItem.setVisible(visible, r#timer) | r})
         case GameNode.Label2DNode(label) => GameNode.Label2DNode(CanvasItem.setVisible(visible, label))
-        case GameNode.GameManager(_) => node
         case _ => Game.mapArea(area -> CanvasItem.setVisible(visible, area), node)
     }
     pub def getModulate(node: GameNode): Color = match node {
         case GameNode.Player(r) => CanvasItem.getModulate(r#body)
         case GameNode.AnimSpriteNode(sprite) => CanvasItem.getModulate(sprite)
         case GameNode.SpriteNode(sprite) => CanvasItem.getModulate(sprite)
-        case GameNode.Marker2DNode(marker) => CanvasItem.getModulate(marker)
-        case GameNode.TimerNode(r) => CanvasItem.getModulate(r#timer)
         case GameNode.Label2DNode(label) => CanvasItem.getModulate(label)
-        case GameNode.GameManager(_) => {r = 1.0f32, g = 1.0f32, b = 1.0f32}
         case _ => CanvasItem.getModulate(Game.getArea(node))
     }
     pub def setModulate(color: Color, node: GameNode): GameNode = match node {
@@ -1000,20 +919,14 @@ instance CanvasItem[GameNode] {
             GameNode.Player({body = CanvasItem.setModulate(color, r#body) | r})
         case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(CanvasItem.setModulate(color, sprite))
         case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(CanvasItem.setModulate(color, sprite))
-        case GameNode.Marker2DNode(marker) => GameNode.Marker2DNode(CanvasItem.setModulate(color, marker))
-        case GameNode.TimerNode(r) => GameNode.TimerNode({timer = CanvasItem.setModulate(color, r#timer) | r})
         case GameNode.Label2DNode(label) => GameNode.Label2DNode(CanvasItem.setModulate(color, label))
-        case GameNode.GameManager(_) => node
         case _ => Game.mapArea(area -> CanvasItem.setModulate(color, area), node)
     }
     pub def getZIndex(node: GameNode): Int32 = match node {
         case GameNode.Player(r) => CanvasItem.getZIndex(r#body)
         case GameNode.AnimSpriteNode(sprite) => CanvasItem.getZIndex(sprite)
         case GameNode.SpriteNode(sprite) => CanvasItem.getZIndex(sprite)
-        case GameNode.Marker2DNode(marker) => CanvasItem.getZIndex(marker)
-        case GameNode.TimerNode(r) => CanvasItem.getZIndex(r#timer)
         case GameNode.Label2DNode(label) => CanvasItem.getZIndex(label)
-        case GameNode.GameManager(_) => 0
         case _ => CanvasItem.getZIndex(Game.getArea(node))
     }
     pub def setZIndex(zIndex: Int32, node: GameNode): GameNode = match node {
@@ -1021,10 +934,7 @@ instance CanvasItem[GameNode] {
             GameNode.Player({body = CanvasItem.setZIndex(zIndex, r#body) | r})
         case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(CanvasItem.setZIndex(zIndex, sprite))
         case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(CanvasItem.setZIndex(zIndex, sprite))
-        case GameNode.Marker2DNode(marker) => GameNode.Marker2DNode(CanvasItem.setZIndex(zIndex, marker))
-        case GameNode.TimerNode(r) => GameNode.TimerNode({timer = CanvasItem.setZIndex(zIndex, r#timer) | r})
         case GameNode.Label2DNode(label) => GameNode.Label2DNode(CanvasItem.setZIndex(zIndex, label))
-        case GameNode.GameManager(_) => node
         case _ => Game.mapArea(area -> CanvasItem.setZIndex(zIndex, area), node)
     }
 }
@@ -1034,10 +944,7 @@ instance Node2D[GameNode] {
         case GameNode.Player(r) => Node2D.getPosition(r#body)
         case GameNode.AnimSpriteNode(sprite) => Node2D.getPosition(sprite)
         case GameNode.SpriteNode(sprite) => Node2D.getPosition(sprite)
-        case GameNode.Marker2DNode(marker) => Node2D.getPosition(marker)
-        case GameNode.TimerNode(r) => Node2D.getPosition(r#timer)
         case GameNode.Label2DNode(label) => Node2D.getPosition(label)
-        case GameNode.GameManager(_) => Vec2.zero()
         case _ => Node2D.getPosition(Game.getArea(node))
     }
     pub def setPosition(position: Vec2.Vec2, node: GameNode): GameNode = match node {
@@ -1045,20 +952,14 @@ instance Node2D[GameNode] {
             GameNode.Player({body = Node2D.setPosition(position, r#body) | r})
         case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(Node2D.setPosition(position, sprite))
         case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(Node2D.setPosition(position, sprite))
-        case GameNode.Marker2DNode(marker) => GameNode.Marker2DNode(Node2D.setPosition(position, marker))
-        case GameNode.TimerNode(r) => GameNode.TimerNode({timer = Node2D.setPosition(position, r#timer) | r})
         case GameNode.Label2DNode(label) => GameNode.Label2DNode(Node2D.setPosition(position, label))
-        case GameNode.GameManager(_) => node
         case _ => Game.mapArea(area -> Node2D.setPosition(position, area), node)
     }
     pub def getRotation(node: GameNode): Float64 = match node {
         case GameNode.Player(r) => Node2D.getRotation(r#body)
         case GameNode.AnimSpriteNode(sprite) => Node2D.getRotation(sprite)
         case GameNode.SpriteNode(sprite) => Node2D.getRotation(sprite)
-        case GameNode.Marker2DNode(marker) => Node2D.getRotation(marker)
-        case GameNode.TimerNode(r) => Node2D.getRotation(r#timer)
         case GameNode.Label2DNode(label) => Node2D.getRotation(label)
-        case GameNode.GameManager(_) => 0.0
         case _ => Node2D.getRotation(Game.getArea(node))
     }
     pub def setRotation(rotation: Float64, node: GameNode): GameNode = match node {
@@ -1066,20 +967,14 @@ instance Node2D[GameNode] {
             GameNode.Player({body = Node2D.setRotation(rotation, r#body) | r})
         case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(Node2D.setRotation(rotation, sprite))
         case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(Node2D.setRotation(rotation, sprite))
-        case GameNode.Marker2DNode(marker) => GameNode.Marker2DNode(Node2D.setRotation(rotation, marker))
-        case GameNode.TimerNode(r) => GameNode.TimerNode({timer = Node2D.setRotation(rotation, r#timer) | r})
         case GameNode.Label2DNode(label) => GameNode.Label2DNode(Node2D.setRotation(rotation, label))
-        case GameNode.GameManager(_) => node
         case _ => Game.mapArea(area -> Node2D.setRotation(rotation, area), node)
     }
     pub def getScale(node: GameNode): Vec2.Vec2 = match node {
         case GameNode.Player(r) => Node2D.getScale(r#body)
         case GameNode.AnimSpriteNode(sprite) => Node2D.getScale(sprite)
         case GameNode.SpriteNode(sprite) => Node2D.getScale(sprite)
-        case GameNode.Marker2DNode(marker) => Node2D.getScale(marker)
-        case GameNode.TimerNode(r) => Node2D.getScale(r#timer)
         case GameNode.Label2DNode(label) => Node2D.getScale(label)
-        case GameNode.GameManager(_) => Vec2.zero()
         case _ => Node2D.getScale(Game.getArea(node))
     }
     pub def setScale(scale: Vec2.Vec2, node: GameNode): GameNode = match node {
@@ -1087,20 +982,14 @@ instance Node2D[GameNode] {
             GameNode.Player({body = Node2D.setScale(scale, r#body) | r})
         case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(Node2D.setScale(scale, sprite))
         case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(Node2D.setScale(scale, sprite))
-        case GameNode.Marker2DNode(marker) => GameNode.Marker2DNode(Node2D.setScale(scale, marker))
-        case GameNode.TimerNode(r) => GameNode.TimerNode({timer = Node2D.setScale(scale, r#timer) | r})
         case GameNode.Label2DNode(label) => GameNode.Label2DNode(Node2D.setScale(scale, label))
-        case GameNode.GameManager(_) => node
         case _ => Game.mapArea(area -> Node2D.setScale(scale, area), node)
     }
     pub def getSkew(node: GameNode): Float64 = match node {
         case GameNode.Player(r) => Node2D.getSkew(r#body)
         case GameNode.AnimSpriteNode(sprite) => Node2D.getSkew(sprite)
         case GameNode.SpriteNode(sprite) => Node2D.getSkew(sprite)
-        case GameNode.Marker2DNode(marker) => Node2D.getSkew(marker)
-        case GameNode.TimerNode(r) => Node2D.getSkew(r#timer)
         case GameNode.Label2DNode(label) => Node2D.getSkew(label)
-        case GameNode.GameManager(_) => 0.0
         case _ => Node2D.getSkew(Game.getArea(node))
     }
     pub def setSkew(skew: Float64, node: GameNode): GameNode = match node {
@@ -1108,10 +997,7 @@ instance Node2D[GameNode] {
             GameNode.Player({body = Node2D.setSkew(skew, r#body) | r})
         case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(Node2D.setSkew(skew, sprite))
         case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(Node2D.setSkew(skew, sprite))
-        case GameNode.Marker2DNode(marker) => GameNode.Marker2DNode(Node2D.setSkew(skew, marker))
-        case GameNode.TimerNode(r) => GameNode.TimerNode({timer = Node2D.setSkew(skew, r#timer) | r})
         case GameNode.Label2DNode(label) => GameNode.Label2DNode(Node2D.setSkew(skew, label))
-        case GameNode.GameManager(_) => node
         case _ => Game.mapArea(area -> Node2D.setSkew(skew, area), node)
     }
 }
@@ -1121,40 +1007,28 @@ instance CollisionObject2D[GameNode] {
         case GameNode.Player(_) => None
         case GameNode.AnimSpriteNode(_) => None
         case GameNode.SpriteNode(_) => None
-        case GameNode.Marker2DNode(_) => None
-        case GameNode.TimerNode(_) => None
         case GameNode.Label2DNode(_) => None
-        case GameNode.GameManager(_) => None
         case _ => CollisionObject2D.getCollisionShape(Game.getArea(node))
     }
     pub def isMonitoring(node: GameNode): Bool = match node {
         case GameNode.Player(_) => false
         case GameNode.AnimSpriteNode(_) => false
         case GameNode.SpriteNode(_) => false
-        case GameNode.Marker2DNode(_) => false
-        case GameNode.TimerNode(_) => false
         case GameNode.Label2DNode(_) => false
-        case GameNode.GameManager(_) => false
         case _ => CollisionObject2D.isMonitoring(Game.getArea(node))
     }
     pub def isMonitorable(node: GameNode): Bool = match node {
         case GameNode.Player(_) => false
         case GameNode.AnimSpriteNode(_) => false
         case GameNode.SpriteNode(_) => false
-        case GameNode.Marker2DNode(_) => false
-        case GameNode.TimerNode(_) => false
         case GameNode.Label2DNode(_) => false
-        case GameNode.GameManager(_) => false
         case _ => CollisionObject2D.isMonitorable(Game.getArea(node))
     }
     redef getCollisionPriority(node: GameNode): Int32 = match node {
         case GameNode.Player(_) => 0
         case GameNode.AnimSpriteNode(_) => 0
         case GameNode.SpriteNode(_) => 0
-        case GameNode.Marker2DNode(_) => 0
-        case GameNode.TimerNode(_) => 0
         case GameNode.Label2DNode(_) => 0
-        case GameNode.GameManager(_) => 0
         case _ => CollisionObject2D.getCollisionPriority(Game.getArea(node))
     }
 }
@@ -1165,7 +1039,6 @@ instance Engine.Renderable[GameNode] {
             case GameNode.SpriteNode(sprite) => Game.spriteToDrawable(sprite, globalPos) :: Nil
             case GameNode.AnimSpriteNode(sprite) => Game.animSpriteToDrawable(sprite, globalPos) :: Nil
             case GameNode.Label2DNode(label) => Label2D.toDrawables(label, globalPos)
-            case GameNode.GameManager(_) => Nil
             case _ => Scene.toDrawable("white", node, globalPos) :: Nil
         }
 }
