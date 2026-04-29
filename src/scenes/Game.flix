@@ -65,20 +65,18 @@ instance AreaHandler[GameData] {
         match (selfState, otherState) {
             // プレイヤーの Hitbox が Vehicle と衝突 → スプライトを赤にする
             case (GameData.HitboxData, GameData.VehicleData(_)) =>
-                Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
-                    case EngineNode.AnimSprite2DWithState(sprite, st) =>
-                        EngineNode.AnimSprite2DWithState(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite), st)
-                    case other => other
-                }, scene)
+                Scene.mapEngineNode("player" :: "Sprite" :: Nil,
+                    EngineNode.mapAnimSprite2D(sprite ->
+                        CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite)),
+                    scene)
             // プレイヤーの Hitbox が HomeSlot と衝突
             case (GameData.HitboxData, GameData.HomeSlotData(r)) =>
                 // 充填済みスロットに入ったら死亡（スプライトを赤にして checkDeath で処理）
                 if (r#filled)
-                    Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
-                        case EngineNode.AnimSprite2DWithState(sprite, st) =>
-                            EngineNode.AnimSprite2DWithState(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite), st)
-                        case other => other
-                    }, scene)
+                    Scene.mapEngineNode("player" :: "Sprite" :: Nil,
+                        EngineNode.mapAnimSprite2D(sprite ->
+                            CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite)),
+                        scene)
                 else
                     scene
                         |> Scene.mapState(otherPath, st -> match st {
@@ -86,11 +84,8 @@ instance AreaHandler[GameData] {
                                 GameData.HomeSlotData({filled = true | hr})
                             case other2 => other2
                         })
-                        |> Scene.mapEngineNode(List.append(otherPath, "sprite" :: Nil), engineNode -> match engineNode {
-                            case EngineNode.Sprite2DWithState(sprite, st) =>
-                                EngineNode.Sprite2DWithState(Sprite2D.setTexture("HomeFrog", sprite), st)
-                            case other2 => other2
-                        })
+                        |> Scene.mapEngineNode(List.append(otherPath, "sprite" :: Nil),
+                            EngineNode.mapSprite2D(sprite -> Sprite2D.setTexture("HomeFrog", sprite)))
                         |> Game.resetPlayerPosition
             case _ => scene
         }
@@ -99,58 +94,8 @@ instance AreaHandler[GameData] {
 mod Game {
 
     // ========================================================================
-    // 画面・タイル定数
+    // 初期状態構築
     // ========================================================================
-
-    /// 画面幅（ピクセル）
-    pub def screenW(): Float32 = 784.0f32
-
-    /// 画面高さ（ピクセル）
-    pub def screenH(): Float32 = 1000.0f32
-
-    /// 画面幅（整数、EngineConfig 用）
-    pub def screenWi(): Int32 = 784
-
-    /// 画面高さ（整数、EngineConfig 用）
-    pub def screenHi(): Int32 = 1000
-
-    /// 1 タイルのサイズ（16px テクスチャを 4 倍表示）
-    pub def tileSize(): Float32 = 64.0f32
-
-    // ========================================================================
-    // プレイヤー定数
-    // ========================================================================
-
-    /// プレイヤー初期位置（スタートゾーン中央）
-    pub def playerStart(): Vec2.Vec2 = {x = 384.0f32, y = 832.0f32}
-
-    /// プレイヤー移動速度（ピクセル/秒）
-    pub def moveSpeed(): Float32 = 512.0f32
-
-    /// プレイヤー位置クランプ範囲（左上）
-    pub def playerMin(): Vec2.Vec2 = {x = 0.0f32, y = 0.0f32}
-
-    /// プレイヤー位置クランプ範囲（右下: screenW - tileSize, スタートゾーン Y）
-    pub def playerMax(): Vec2.Vec2 = {x = 720.0f32, y = 832.0f32}
-
-    // ========================================================================
-    // ゾーン Y 座標・高さ
-    // ========================================================================
-
-    def homeZoneY(): Float32 = 0.0f32
-    def homeZoneH(): Float32 = 64.0f32
-
-    pub def waterZoneY(): Float32 = 64.0f32
-    pub def waterZoneH(): Float32 = 384.0f32
-
-    def medianZoneY(): Float32 = 448.0f32
-    def medianZoneH(): Float32 = 64.0f32
-
-    def roadZoneY(): Float32 = 512.0f32
-    def roadZoneH(): Float32 = 320.0f32
-
-    def startZoneY(): Float32 = 832.0f32
-    def startZoneH(): Float32 = 64.0f32
 
     /// Frogger の初期状態を構築する
     pub def buildState(fontAtlas: FontAtlas): GameState =
@@ -222,6 +167,191 @@ mod Game {
             lives = 3,
             phase = GamePhase.Playing
         }
+
+    // ========================================================================
+    // メインループ
+    // ========================================================================
+
+    pub def start(fontAtlas: FontAtlas): Unit \ Engine.Game =
+        gameLoop(fontAtlas, buildState(fontAtlas))
+
+    def gameLoop(fontAtlas: FontAtlas, state: GameState): Unit \ Engine.Game =
+        if (Engine.Game.shouldClose()) ()
+        else if (Engine.Game.isKeyPressed(Engine.Key.Escape)) ()
+        else {
+            let dt = Engine.Game.getDeltaTime();
+            match state#phase {
+                case GamePhase.Playing =>
+                    let prevFilled = countFilledHomes(state#scene);
+                    { scene = GameEngine.updateWithAreaHandler(dt, false, state#scene) | state }
+                        |> handlePlayerInput
+                        |> processTimers(dt)
+                        |> applyPlatformRiding(dt)
+                        |> checkHomeCompletion(prevFilled)
+                        |> checkDeath
+                        |> checkDrown
+                        |> handleTimerTimeouts
+                        |> updateHUD
+                        |> gameLoop(fontAtlas)
+                case GamePhase.Dying =>
+                    { scene = GameEngine.updateWithAreaHandler(dt, false, state#scene) | state }
+                        |> processTimers(dt)
+                        |> handleTimerTimeouts
+                        |> updateHUD
+                        |> gameLoop(fontAtlas)
+                case GamePhase.GameOver =>
+                    if (Engine.Game.isKeyPressed(Engine.Key.Enter))
+                        gameLoop(fontAtlas, buildState(fontAtlas))
+                    else
+                        { scene = GameEngine.updateWithAreaHandler(dt, true, state#scene) | state }
+                            |> updateHUD
+                            |> gameLoop(fontAtlas)
+                case GamePhase.Win =>
+                    if (Engine.Game.isKeyPressed(Engine.Key.Enter))
+                        gameLoop(fontAtlas, buildState(fontAtlas))
+                    else
+                        { scene = GameEngine.updateWithAreaHandler(dt, true, state#scene) | state }
+                            |> updateHUD
+                            |> gameLoop(fontAtlas)
+            }
+        }
+
+    // ========================================================================
+    // キーボード入力
+    // ========================================================================
+
+    pub def collectPressedKeys(): Set[Engine.Key] \ Engine.Game =
+        let keys = Engine.Key.W :: Engine.Key.A :: Engine.Key.S :: Engine.Key.D ::
+                   Engine.Key.Up :: Engine.Key.Down :: Engine.Key.Left :: Engine.Key.Right ::
+                   Engine.Key.Enter :: Engine.Key.Escape :: Nil;
+        List.foldLeft((acc, key) ->
+            if (Engine.Game.isKeyPressed(key)) Set.insert(key, acc) else acc,
+            Set.empty(), keys)
+
+    pub def justPressedKeys(current: Set[Engine.Key], previous: Set[Engine.Key]): Set[Engine.Key] =
+        Set.difference(current, previous)
+
+    pub def inputDirection(justPressed: Set[Engine.Key]): Option[Vec2.Vec2] =
+        if (Set.memberOf(Engine.Key.W, justPressed) or Set.memberOf(Engine.Key.Up, justPressed))
+            Some(Vec2.up())
+        else if (Set.memberOf(Engine.Key.S, justPressed) or Set.memberOf(Engine.Key.Down, justPressed))
+            Some(Vec2.down())
+        else if (Set.memberOf(Engine.Key.A, justPressed) or Set.memberOf(Engine.Key.Left, justPressed))
+            Some(Vec2.left())
+        else if (Set.memberOf(Engine.Key.D, justPressed) or Set.memberOf(Engine.Key.Right, justPressed))
+            Some(Vec2.right())
+        else
+            None
+
+    // ========================================================================
+    // プレイヤー操作
+    // ========================================================================
+
+    pub def directionToRotation(direction: Vec2.Vec2): Float64 =
+        if (direction#y < 0.0f32) 0.0
+        else if (direction#x > 0.0f32) 1.5707963267949
+        else if (direction#y > 0.0f32) 3.1415926535898
+        else -1.5707963267949
+
+    pub def getPlayerTarget(scene: Scene[GameData]): Vec2.Vec2 =
+        match Scene.get("player", scene) {
+            case Some(GameData.PlayerData(r)) => r#target
+            case _ => playerStart()
+        }
+
+    // ========================================================================
+    // プレイヤー入力処理
+    // ========================================================================
+
+    pub def handlePlayerInput(state: GameState): GameState \ Engine.Game =
+        match Scene.get("player", state#scene) {
+            case Some(GameData.PlayerData(r)) =>
+                let currKeys = collectPressedKeys();
+                if (state#phase != GamePhase.Playing)
+                    { scene = Scene.mapState("player" :: Nil, st -> match st {
+                        case GameData.PlayerData(pr) => GameData.PlayerData({prevKeys = currKeys | pr})
+                        case other => other
+                    }, state#scene) | state }
+                else {
+                    let justPressed = justPressedKeys(currKeys, r#prevKeys);
+                    match inputDirection(justPressed) {
+                        case None =>
+                            { scene = Scene.mapState("player" :: Nil, st -> match st {
+                                case GameData.PlayerData(pr) => GameData.PlayerData({prevKeys = currKeys | pr})
+                                case other => other
+                            }, state#scene) | state }
+                        case Some(dir) =>
+                            let nt = Vec2.clamp(
+                                Vec2.add(r#target, Vec2.mul(dir, tileSize())),
+                                playerMin(), playerMax());
+                            { scene = state#scene
+                                |> Scene.mapState("player" :: Nil, st -> match st {
+                                    case GameData.PlayerData(pr) =>
+                                        GameData.PlayerData({prevKeys = currKeys, target = nt | pr})
+                                    case other => other
+                                })
+                                |> Scene.mapEngineNode("player" :: "Sprite" :: Nil,
+                                    EngineNode.mapAnimSprite2D(sprite ->
+                                        Node2D.setRotation(directionToRotation(dir), sprite)))
+                              | state }
+                    }
+                }
+            case _ => state
+        }
+
+    // ========================================================================
+    // 画面・タイル定数
+    // ========================================================================
+
+    /// 画面幅（ピクセル）
+    pub def screenW(): Float32 = 784.0f32
+
+    /// 画面高さ（ピクセル）
+    pub def screenH(): Float32 = 1000.0f32
+
+    /// 画面幅（整数、EngineConfig 用）
+    pub def screenWi(): Int32 = 784
+
+    /// 画面高さ（整数、EngineConfig 用）
+    pub def screenHi(): Int32 = 1000
+
+    /// 1 タイルのサイズ（16px テクスチャを 4 倍表示）
+    pub def tileSize(): Float32 = 64.0f32
+
+    // ========================================================================
+    // プレイヤー定数
+    // ========================================================================
+
+    /// プレイヤー初期位置（スタートゾーン中央）
+    pub def playerStart(): Vec2.Vec2 = {x = 384.0f32, y = 832.0f32}
+
+    /// プレイヤー移動速度（ピクセル/秒）
+    pub def moveSpeed(): Float32 = 512.0f32
+
+    /// プレイヤー位置クランプ範囲（左上）
+    pub def playerMin(): Vec2.Vec2 = {x = 0.0f32, y = 0.0f32}
+
+    /// プレイヤー位置クランプ範囲（右下: screenW - tileSize, スタートゾーン Y）
+    pub def playerMax(): Vec2.Vec2 = {x = 720.0f32, y = 832.0f32}
+
+    // ========================================================================
+    // ゾーン Y 座標・高さ
+    // ========================================================================
+
+    def homeZoneY(): Float32 = 0.0f32
+    def homeZoneH(): Float32 = 64.0f32
+
+    pub def waterZoneY(): Float32 = 64.0f32
+    pub def waterZoneH(): Float32 = 384.0f32
+
+    def medianZoneY(): Float32 = 448.0f32
+    def medianZoneH(): Float32 = 64.0f32
+
+    def roadZoneY(): Float32 = 512.0f32
+    def roadZoneH(): Float32 = 320.0f32
+
+    def startZoneY(): Float32 = 832.0f32
+    def startZoneH(): Float32 = 64.0f32
 
     // ========================================================================
     // スプライト生成ヘルパー
@@ -522,91 +652,6 @@ mod Game {
         } else state
 
     // ========================================================================
-    // キーボード入力
-    // ========================================================================
-
-    pub def collectPressedKeys(): Set[Engine.Key] \ Engine.Game =
-        let keys = Engine.Key.W :: Engine.Key.A :: Engine.Key.S :: Engine.Key.D ::
-                   Engine.Key.Up :: Engine.Key.Down :: Engine.Key.Left :: Engine.Key.Right ::
-                   Engine.Key.Enter :: Engine.Key.Escape :: Nil;
-        List.foldLeft((acc, key) ->
-            if (Engine.Game.isKeyPressed(key)) Set.insert(key, acc) else acc,
-            Set.empty(), keys)
-
-    pub def justPressedKeys(current: Set[Engine.Key], previous: Set[Engine.Key]): Set[Engine.Key] =
-        Set.difference(current, previous)
-
-    pub def inputDirection(justPressed: Set[Engine.Key]): Option[Vec2.Vec2] =
-        if (Set.memberOf(Engine.Key.W, justPressed) or Set.memberOf(Engine.Key.Up, justPressed))
-            Some(Vec2.up())
-        else if (Set.memberOf(Engine.Key.S, justPressed) or Set.memberOf(Engine.Key.Down, justPressed))
-            Some(Vec2.down())
-        else if (Set.memberOf(Engine.Key.A, justPressed) or Set.memberOf(Engine.Key.Left, justPressed))
-            Some(Vec2.left())
-        else if (Set.memberOf(Engine.Key.D, justPressed) or Set.memberOf(Engine.Key.Right, justPressed))
-            Some(Vec2.right())
-        else
-            None
-
-    // ========================================================================
-    // プレイヤー操作
-    // ========================================================================
-
-    pub def directionToRotation(direction: Vec2.Vec2): Float64 =
-        if (direction#y < 0.0f32) 0.0
-        else if (direction#x > 0.0f32) 1.5707963267949
-        else if (direction#y > 0.0f32) 3.1415926535898
-        else -1.5707963267949
-
-    pub def getPlayerTarget(scene: Scene[GameData]): Vec2.Vec2 =
-        match Scene.get("player", scene) {
-            case Some(GameData.PlayerData(r)) => r#target
-            case _ => playerStart()
-        }
-
-    // ========================================================================
-    // プレイヤー入力処理
-    // ========================================================================
-
-    pub def handlePlayerInput(state: GameState): GameState \ Engine.Game =
-        match Scene.get("player", state#scene) {
-            case Some(GameData.PlayerData(r)) =>
-                let currKeys = collectPressedKeys();
-                if (state#phase != GamePhase.Playing)
-                    { scene = Scene.mapState("player" :: Nil, st -> match st {
-                        case GameData.PlayerData(pr) => GameData.PlayerData({prevKeys = currKeys | pr})
-                        case other => other
-                    }, state#scene) | state }
-                else {
-                    let justPressed = justPressedKeys(currKeys, r#prevKeys);
-                    match inputDirection(justPressed) {
-                        case None =>
-                            { scene = Scene.mapState("player" :: Nil, st -> match st {
-                                case GameData.PlayerData(pr) => GameData.PlayerData({prevKeys = currKeys | pr})
-                                case other => other
-                            }, state#scene) | state }
-                        case Some(dir) =>
-                            let nt = Vec2.clamp(
-                                Vec2.add(r#target, Vec2.mul(dir, tileSize())),
-                                playerMin(), playerMax());
-                            { scene = state#scene
-                                |> Scene.mapState("player" :: Nil, st -> match st {
-                                    case GameData.PlayerData(pr) =>
-                                        GameData.PlayerData({prevKeys = currKeys, target = nt | pr})
-                                    case other => other
-                                })
-                                |> Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
-                                    case EngineNode.AnimSprite2DWithState(sprite, st) =>
-                                        EngineNode.AnimSprite2DWithState(Node2D.setRotation(directionToRotation(dir), sprite), st)
-                                    case other => other
-                                })
-                              | state }
-                    }
-                }
-            case _ => state
-        }
-
-    // ========================================================================
     // プラットフォーム乗り
     // ========================================================================
 
@@ -641,11 +686,9 @@ mod Game {
             case Some(platformVx) =>
                 let shift: Vec2.Vec2 = {x = platformVx * dt, y = 0.0f32};
                 { scene = state#scene
-                    |> Scene.mapEngineNode("player" :: Nil, engineNode -> match engineNode {
-                        case EngineNode.Body2DWithState(body, st) =>
-                            EngineNode.Body2DWithState(Node2D.setPosition(Vec2.add(Node2D.getPosition(body), shift), body), st)
-                        case other => other
-                    })
+                    |> Scene.mapEngineNode("player" :: Nil,
+                        EngineNode.mapBody2D(body ->
+                            Node2D.setPosition(Vec2.add(Node2D.getPosition(body), shift), body)))
                     |> Scene.mapState("player" :: Nil, st -> match st {
                         case GameData.PlayerData(r) =>
                             GameData.PlayerData({target = Vec2.add(r#target, shift) | r})
@@ -665,15 +708,10 @@ mod Game {
           phase = GamePhase.Dying | state }
 
     pub def playDeathAnim(color: Color, scene: Scene[GameData]): Scene[GameData] =
-        Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
-            case EngineNode.AnimSprite2DWithState(sprite, st) =>
-                EngineNode.AnimSprite2DWithState(
-                    sprite
-                        |> AnimatedSprite2D.play("dead")
-                        |> CanvasItem.setModulate(color),
-                    st)
-            case other => other
-        }, scene)
+        Scene.mapEngineNode("player" :: "Sprite" :: Nil,
+            EngineNode.mapAnimSprite2D(sprite ->
+                sprite |> AnimatedSprite2D.play("dead") |> CanvasItem.setModulate(color)),
+            scene)
 
     pub def checkDeath(state: GameState): GameState =
         match Scene.getEngineNode("player" :: "Sprite" :: Nil, state#scene) {
@@ -710,11 +748,8 @@ mod Game {
     /// プレイヤーとターゲットの位置をスタート地点にリセットする
     pub def resetPlayerPosition(scene: Scene[GameData]): Scene[GameData] =
         scene
-            |> Scene.mapEngineNode("player" :: Nil, engineNode -> match engineNode {
-                case EngineNode.Body2DWithState(body, st) =>
-                    EngineNode.Body2DWithState(Node2D.setPosition(playerStart(), body), st)
-                case other => other
-            })
+            |> Scene.mapEngineNode("player" :: Nil,
+                EngineNode.mapBody2D(body -> Node2D.setPosition(playerStart(), body)))
             |> Scene.mapState("player" :: Nil, st -> match st {
                 case GameData.PlayerData(r) =>
                     GameData.PlayerData({target = playerStart() | r})
@@ -739,16 +774,12 @@ mod Game {
         if (Timer.isTimedOut(state1#deathTimer)) {
             let newLives = state1#lives - 1;
             let newScene = resetPlayerPosition(state1#scene)
-                |> Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
-                    case EngineNode.AnimSprite2DWithState(sprite, st) =>
-                        EngineNode.AnimSprite2DWithState(
-                            sprite
-                                |> AnimatedSprite2D.play("idle")
-                                |> CanvasItem.setModulate({r = 1.0f32, g = 1.0f32, b = 1.0f32})
-                                |> Node2D.setRotation(0.0),
-                            st)
-                    case other => other
-                });
+                |> Scene.mapEngineNode("player" :: "Sprite" :: Nil,
+                    EngineNode.mapAnimSprite2D(sprite ->
+                        sprite
+                            |> AnimatedSprite2D.play("idle")
+                            |> CanvasItem.setModulate({r = 1.0f32, g = 1.0f32, b = 1.0f32})
+                            |> Node2D.setRotation(0.0)));
             let newPhase = if (newLives <= 0) GamePhase.GameOver else GamePhase.Playing;
             { scene = newScene,
               deathTimer = Timer.clearTimedOut(state1#deathTimer),
@@ -767,64 +798,10 @@ mod Game {
         let timeInt = Float64.truncateToInt32(
             Float32.toFloat64(Float32.max(0.0f32, Timer.getTimeLeft(state#gameTimer))));
         { scene = state#scene
-            |> Scene.mapEngineNode("timerLabel" :: Nil, engineNode -> match engineNode {
-                case EngineNode.Label2DWithState(label, st) =>
-                    EngineNode.Label2DWithState(Label2D.setText("TIME: ${timeInt}", label), st)
-                case other => other
-            })
-            |> Scene.mapEngineNode("livesLabel" :: Nil, engineNode -> match engineNode {
-                case EngineNode.Label2DWithState(label, st) =>
-                    EngineNode.Label2DWithState(Label2D.setText("LIVES: ${state#lives}", label), st)
-                case other => other
-            })
+            |> Scene.mapEngineNode("timerLabel" :: Nil,
+                EngineNode.mapLabel2D(label -> Label2D.setText("TIME: ${timeInt}", label)))
+            |> Scene.mapEngineNode("livesLabel" :: Nil,
+                EngineNode.mapLabel2D(label -> Label2D.setText("LIVES: ${state#lives}", label)))
           | state }
-
-    // ========================================================================
-    // メインループ
-    // ========================================================================
-
-    pub def start(fontAtlas: FontAtlas): Unit \ Engine.Game =
-        gameLoop(fontAtlas, buildState(fontAtlas))
-
-    def gameLoop(fontAtlas: FontAtlas, state: GameState): Unit \ Engine.Game =
-        if (Engine.Game.shouldClose()) ()
-        else if (Engine.Game.isKeyPressed(Engine.Key.Escape)) ()
-        else {
-            let dt = Engine.Game.getDeltaTime();
-            match state#phase {
-                case GamePhase.Playing =>
-                    let prevFilled = countFilledHomes(state#scene);
-                    { scene = GameEngine.updateWithAreaHandler(dt, false, state#scene) | state }
-                        |> handlePlayerInput
-                        |> processTimers(dt)
-                        |> applyPlatformRiding(dt)
-                        |> checkHomeCompletion(prevFilled)
-                        |> checkDeath
-                        |> checkDrown
-                        |> handleTimerTimeouts
-                        |> updateHUD
-                        |> gameLoop(fontAtlas)
-                case GamePhase.Dying =>
-                    { scene = GameEngine.updateWithAreaHandler(dt, false, state#scene) | state }
-                        |> processTimers(dt)
-                        |> handleTimerTimeouts
-                        |> updateHUD
-                        |> gameLoop(fontAtlas)
-                case GamePhase.GameOver =>
-                    if (Engine.Game.isKeyPressed(Engine.Key.Enter))
-                        gameLoop(fontAtlas, buildState(fontAtlas))
-                    else
-                        { scene = GameEngine.updateWithAreaHandler(dt, true, state#scene) | state }
-                            |> updateHUD
-                            |> gameLoop(fontAtlas)
-                case GamePhase.Win =>
-                    if (Engine.Game.isKeyPressed(Engine.Key.Enter))
-                        gameLoop(fontAtlas, buildState(fontAtlas))
-                    else
-                        { scene = GameEngine.updateWithAreaHandler(dt, true, state#scene) | state }
-                            |> updateHUD
-                            |> gameLoop(fontAtlas)
-            }
-        }
 
 }

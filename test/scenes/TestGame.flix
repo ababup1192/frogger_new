@@ -370,11 +370,10 @@ def testDirectionToRotationDown(): Unit \ Assert =
 @Test
 def testCheckDeathDetectsRed(): Unit \ Assert =
     let state = testState();
-    let redScene = Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
-        case EngineNode.AnimSprite2DWithState(sprite, st) =>
-            EngineNode.AnimSprite2DWithState(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite), st)
-        case other => other
-    }, state#scene);
+    let redScene = Scene.mapEngineNode("player" :: "Sprite" :: Nil,
+        EngineNode.mapAnimSprite2D(sprite ->
+            CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite)),
+        state#scene);
     let deadState = Game.checkDeath({ scene = redScene | state });
     Assert.assertEq(expected = (GamePhase.Dying, true), (deadState#phase, Timer.isRunning(deadState#deathTimer)))
 
@@ -395,11 +394,8 @@ def testCheckDrownInWater(): Unit \ Assert =
     let state = testState();
     let waterPos: Vec2.Vec2 = {x = 384.0f32, y = 430.0f32};
     let newScene = Scene.setGlobalPosition("player", waterPos, state#scene)
-        |> Scene.mapEngineNode("player" :: Nil, engineNode -> match engineNode {
-            case EngineNode.Body2DWithState(body, st) =>
-                EngineNode.Body2DWithState(Node2D.setPosition(waterPos, body), st)
-            case other => other
-        })
+        |> Scene.mapEngineNode("player" :: Nil,
+            EngineNode.mapBody2D(body -> Node2D.setPosition(waterPos, body)))
         |> Scene.mapState("player" :: Nil, st -> match st {
             case GameData.PlayerData(r) =>
                 GameData.PlayerData({target = waterPos | r})
@@ -513,11 +509,8 @@ def testAreaHandlerSkipsFilledSlot(): Unit \ Assert =
             case GameData.HomeSlotData(r) => GameData.HomeSlotData({filled = true | r})
             case other => other
         })
-        |> Scene.mapEngineNode("player" :: Nil, engineNode -> match engineNode {
-            case EngineNode.Body2DWithState(body, st) =>
-                EngineNode.Body2DWithState(Node2D.setPosition(movedPos, body), st)
-            case other => other
-        });
+        |> Scene.mapEngineNode("player" :: Nil,
+            EngineNode.mapBody2D(body -> Node2D.setPosition(movedPos, body)));
     let hitboxPath = "player" :: "Hitbox" :: Nil;
     let slotPath = "home2" :: Nil;
     match (Scene.getState(hitboxPath, scene), Scene.getState(slotPath, scene)) {

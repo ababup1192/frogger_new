@@ -50,6 +50,36 @@ mod EngineNode {
         case EngineNode.Marker2DWithState(inner, state) => EngineNode.Marker2DWithState(inner, f(state))
     }
 
+    /// Sprite2D の inner node に関数を適用する（他バリアントは変更なし）
+    pub def mapSprite2D(f: Sprite2D -> Sprite2D, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.Sprite2DWithState(inner, st) => EngineNode.Sprite2DWithState(f(inner), st)
+        case _ => node
+    }
+
+    /// AnimatedSprite2D の inner node に関数を適用する
+    pub def mapAnimSprite2D(f: AnimatedSprite2D -> AnimatedSprite2D, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.AnimSprite2DWithState(inner, st) => EngineNode.AnimSprite2DWithState(f(inner), st)
+        case _ => node
+    }
+
+    /// CharacterBody2D の inner node に関数を適用する
+    pub def mapBody2D(f: CharacterBody2D -> CharacterBody2D, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.Body2DWithState(inner, st) => EngineNode.Body2DWithState(f(inner), st)
+        case _ => node
+    }
+
+    /// Area2D の inner node に関数を適用する
+    pub def mapArea2D(f: Area2D -> Area2D, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.Area2DWithState(inner, st) => EngineNode.Area2DWithState(f(inner), st)
+        case _ => node
+    }
+
+    /// Label2D の inner node に関数を適用する
+    pub def mapLabel2D(f: Label2D -> Label2D, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.Label2DWithState(inner, st) => EngineNode.Label2DWithState(f(inner), st)
+        case _ => node
+    }
+
     /// エンジンレベルの毎フレーム処理
     /// AnimatedSprite2D のフレーム送りを自動で行う。
     pub def engineProcess(delta: Float32, node: EngineNode[s]): EngineNode[s] = match node {
