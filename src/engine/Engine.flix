@@ -41,11 +41,26 @@ mod Engine {
         pub def toDrawable(node: n, globalPos: Vec2.Vec2): Drawable
     }
 
-    /// ゲームエフェクト: 描画・ウィンドウ制御・時間取得
+    /// キーボードキー（Frogger で使用するキーのみ）
+    pub enum Key with Eq, Order, ToString {
+        case W
+        case A
+        case S
+        case D
+        case Up
+        case Down
+        case Left
+        case Right
+        case Enter
+        case Escape
+    }
+
+    /// ゲームエフェクト: 描画・ウィンドウ制御・時間取得・キー入力
     pub eff Game {
         def render(drawables: List[Drawable]): Unit
         def shouldClose(): Bool
         def getDeltaTime(): Float32
+        def isKeyPressed(key: Key): Bool
     }
 
     /// macOS では -XstartOnFirstThread 付きでプロセスを再起動する。

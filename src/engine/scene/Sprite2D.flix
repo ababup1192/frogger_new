@@ -76,6 +76,11 @@ mod Sprite2D {
             flipV = false
         })
 
+    /// テクスチャ名を変更する
+    pub def setTexture(texture: String, sprite: Sprite2D): Sprite2D =
+        let Sprite2D.Sprite2D(r) = sprite;
+        Sprite2D.Sprite2D({texture = texture | r})
+
     /// グローバル座標を受け取り Drawable に変換する
     pub def toDrawableAt(sprite: Sprite2D, globalPos: Vec2.Vec2): Engine.Drawable =
         let Sprite2D.Sprite2D(r) = sprite;

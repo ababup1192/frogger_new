@@ -113,6 +113,23 @@ mod LwjglLayer {
         }, Map.empty(), manifest)
 
     // ========================================================================
+    // Key Mapping (Engine.Key → GLFW key code)
+    // ========================================================================
+
+    def keyToGlfw(key: Engine.Key): Int32 = match key {
+        case Engine.Key.W     => 87
+        case Engine.Key.A     => 65
+        case Engine.Key.S     => 83
+        case Engine.Key.D     => 68
+        case Engine.Key.Up    => 265
+        case Engine.Key.Down  => 264
+        case Engine.Key.Left  => 263
+        case Engine.Key.Right => 262
+        case Engine.Key.Enter  => 257
+        case Engine.Key.Escape => 256
+    }
+
+    // ========================================================================
     // Sprite Renderer
     // ========================================================================
 
@@ -262,6 +279,10 @@ mod LwjglLayer {
                 let dtNanos = currentTime - prev;
                 let dtf = Int64.toFloat32(dtNanos) / 1000000000.0f32;
                 k(dtf)
+            }
+            def isKeyPressed(key, k) = {
+                let code = keyToGlfw(key);
+                k(GLFW.glfwGetKey(window, code) == 1)
             }
         };
 

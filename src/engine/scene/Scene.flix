@@ -150,6 +150,13 @@ pub mod Scene {
     pub def set(name: NodeName, node: n, scene: Scene[n]): Scene[n] =
         setAt(name :: Nil, node, scene)
 
+    /// パスで指定されたノードに関数を適用する（ノードが見つからない場合は変更なし）
+    pub def mapAt(path: NodePath, f: n -> n, scene: Scene[n]): Scene[n] =
+        modifyAt(path, entry ->
+            let SceneEntry.SceneEntry(r) = entry;
+            SceneEntry.SceneEntry({ node = f(r#node) | r }),
+            scene)
+
     /// ルート削除（既存互換）
     pub def remove(name: NodeName, scene: Scene[n]): Scene[n] =
         removeAt(name :: Nil, scene)
