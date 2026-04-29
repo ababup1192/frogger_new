@@ -448,47 +448,80 @@ def testHomeSlotHasSprite(): Unit \ Assert =
         List.length(Scene.getChildren("home0", testScene())))
 
 // ========================================================================
-// tryFillHomeSlot: ホームスロット充填
+// AreaHandler: ホームスロット充填
 // ========================================================================
 
-/// プレイヤーがホームゾーン中央（x=384, y=0）に到達すると home2 が充填される
+/// PlayerHitbox が未充填 HomeSlot に侵入すると filled=true になる
 @Test
-def testTryFillHomeSlotFills(): Unit \ Assert =
-    let state = testState();
-    let homePos: Vec2.Vec2 = {x = 384.0f32, y = 0.0f32};
-    let newScene = state#scene
-        |> Scene.mapAt("player" :: Nil, node -> match node {
-            case GameNode.Player(r) =>
-                GameNode.Player({body = Node2D.setPosition(homePos, r#body), target = homePos | r})
-            case other => other
-        });
-    let filledState = Game.tryFillHomeSlot({ scene = newScene | state });
-    match Scene.get("home2", filledState#scene) {
-        case Some(GameNode.HomeSlot(r)) => Assert.assertTrue(r#filled)
-        case _ => bug!("home2 not found")
+def testAreaHandlerFillsHomeSlot(): Unit \ Assert =
+    let scene = testScene();
+    let hitboxPath = "player" :: "Hitbox" :: Nil;
+    let slotPath = "home2" :: Nil;
+    match (Scene.getAt(hitboxPath, scene), Scene.getAt(slotPath, scene)) {
+        case (Some(hitbox), Some(slot)) =>
+            let newScene = AreaHandler.onAreaEntered(hitboxPath, hitbox, slotPath, slot, scene);
+            match Scene.get("home2", newScene) {
+                case Some(GameNode.HomeSlot(r)) => Assert.assertTrue(r#filled)
+                case _ => bug!("home2 not found")
+            }
+        case _ => bug!("nodes not found")
     }
 
-/// ホームスロット充填後、プレイヤーがスタート位置にリセットされる
+/// HomeSlot 充填後、スプライトテクスチャが HomeFrog に変わる
 @Test
-def testTryFillHomeSlotResetsPlayer(): Unit \ Assert =
-    let state = testState();
-    let homePos: Vec2.Vec2 = {x = 384.0f32, y = 0.0f32};
-    let newScene = state#scene
+def testAreaHandlerFillChangesTexture(): Unit \ Assert =
+    let scene = testScene();
+    let hitboxPath = "player" :: "Hitbox" :: Nil;
+    let slotPath = "home2" :: Nil;
+    match (Scene.getAt(hitboxPath, scene), Scene.getAt(slotPath, scene)) {
+        case (Some(hitbox), Some(slot)) =>
+            let newScene = AreaHandler.onAreaEntered(hitboxPath, hitbox, slotPath, slot, scene);
+            match Scene.getAt("home2" :: "sprite" :: Nil, newScene) {
+                case Some(GameNode.SpriteNode(sprite)) =>
+                    let Sprite2D.Sprite2D(r) = sprite;
+                    Assert.assertEq(expected = "HomeFrog", r#texture)
+                case _ => bug!("home2 sprite not found")
+            }
+        case _ => bug!("nodes not found")
+    }
+
+/// HomeSlot 充填後、プレイヤーがスタート位置にリセットされる
+@Test
+def testAreaHandlerFillResetsPlayer(): Unit \ Assert =
+    let scene = testScene();
+    let hitboxPath = "player" :: "Hitbox" :: Nil;
+    let slotPath = "home2" :: Nil;
+    match (Scene.getAt(hitboxPath, scene), Scene.getAt(slotPath, scene)) {
+        case (Some(hitbox), Some(slot)) =>
+            let newScene = AreaHandler.onAreaEntered(hitboxPath, hitbox, slotPath, slot, scene);
+            let pos = Scene.globalPosition("player", newScene);
+            Assert.assertEq(expected = (384.0f32, 832.0f32), (pos#x, pos#y))
+        case _ => bug!("nodes not found")
+    }
+
+/// 充填済み HomeSlot に侵入してもプレイヤー位置がリセットされない
+@Test
+def testAreaHandlerSkipsFilledSlot(): Unit \ Assert =
+    let movedPos: Vec2.Vec2 = {x = 200.0f32, y = 100.0f32};
+    let scene = testScene()
+        |> Scene.mapAt("home2" :: Nil, node -> match node {
+            case GameNode.HomeSlot(r) => GameNode.HomeSlot({filled = true | r})
+            case other => other
+        })
         |> Scene.mapAt("player" :: Nil, node -> match node {
             case GameNode.Player(r) =>
-                GameNode.Player({body = Node2D.setPosition(homePos, r#body), target = homePos | r})
+                GameNode.Player({body = Node2D.setPosition(movedPos, r#body) | r})
             case other => other
         });
-    let filledState = Game.tryFillHomeSlot({ scene = newScene | state });
-    let pos = Scene.globalPosition("player", filledState#scene);
-    Assert.assertEq(expected = (384.0f32, 832.0f32), (pos#x, pos#y))
-
-/// ホームゾーンにいないとき tryFillHomeSlot は何もしない
-@Test
-def testTryFillHomeSlotNoOpInRoad(): Unit \ Assert =
-    let state = testState();
-    let filledState = Game.tryFillHomeSlot(state);
-    Assert.assertFalse(Game.allHomesFilled(filledState#scene))
+    let hitboxPath = "player" :: "Hitbox" :: Nil;
+    let slotPath = "home2" :: Nil;
+    match (Scene.getAt(hitboxPath, scene), Scene.getAt(slotPath, scene)) {
+        case (Some(hitbox), Some(slot)) =>
+            let newScene = AreaHandler.onAreaEntered(hitboxPath, hitbox, slotPath, slot, scene);
+            let pos = Scene.globalPosition("player", newScene);
+            Assert.assertEq(expected = (200.0f32, 100.0f32), (pos#x, pos#y))
+        case _ => bug!("nodes not found")
+    }
 
 /// 全5スロット充填で allHomesFilled が true を返す
 @Test
@@ -503,27 +536,41 @@ def testAllHomesFilledWin(): Unit \ Assert =
         scene);
     Assert.assertTrue(Game.allHomesFilled(scene1))
 
-/// 最後のスロット充填時に tryFillHomeSlot が phase を Win に遷移させる
+// ========================================================================
+// checkHomeCompletion: 充填後の後処理
+// ========================================================================
+
+/// スロットが新たに充填されるとタイマーがリスタートされる
 @Test
-def testTryFillHomeSlotWinTransition(): Unit \ Assert =
+def testCheckHomeCompletionRestartsTimer(): Unit \ Assert =
     let state = testState();
-    // 先に 4 スロットを充填
-    let scene1 = List.range(0, 4) |> List.foldLeft((acc, idx) ->
+    let scene1 = Scene.mapAt("home0" :: Nil, node -> match node {
+        case GameNode.HomeSlot(r) =>
+            GameNode.HomeSlot({filled = true | r})
+        case other => other
+    }, state#scene);
+    let updatedState = Game.checkHomeCompletion(0, { scene = scene1 | state });
+    Assert.assertTrue(Timer.isRunning(updatedState#gameTimer))
+
+/// 充填数が変わらない場合は何もしない
+@Test
+def testCheckHomeCompletionNoOp(): Unit \ Assert =
+    let state = testState();
+    let updatedState = Game.checkHomeCompletion(0, state);
+    Assert.assertEq(expected = GamePhase.Playing, updatedState#phase)
+
+/// 最後のスロット充填時に checkHomeCompletion が phase を Win に遷移させる
+@Test
+def testCheckHomeCompletionWinTransition(): Unit \ Assert =
+    let state = testState();
+    let scene1 = List.range(0, 5) |> List.foldLeft((acc, idx) ->
         Scene.mapAt("home${idx}" :: Nil, node -> match node {
             case GameNode.HomeSlot(r) =>
                 GameNode.HomeSlot({filled = true | r})
             case other => other
         }, acc),
         state#scene);
-    // 最後のスロット (home4, x=704) にプレイヤーを配置
-    let homePos: Vec2.Vec2 = {x = 704.0f32, y = 0.0f32};
-    let scene2 = scene1
-        |> Scene.mapAt("player" :: Nil, node -> match node {
-            case GameNode.Player(r) =>
-                GameNode.Player({body = Node2D.setPosition(homePos, r#body), target = homePos | r})
-            case other => other
-        });
-    let filledState = Game.tryFillHomeSlot({ scene = scene2 | state });
+    let filledState = Game.checkHomeCompletion(4, { scene = scene1 | state });
     Assert.assertEq(expected = GamePhase.Win, filledState#phase)
 
 // ========================================================================

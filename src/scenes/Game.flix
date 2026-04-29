@@ -79,7 +79,7 @@ instance Node[GameNode] {
 
 instance AreaHandler[GameNode] {
     pub def onAreaEntered(_selfPath: NodePath, self: GameNode,
-                          _otherPath: NodePath, other: GameNode,
+                          otherPath: NodePath, other: GameNode,
                           scene: Scene[GameNode]): Scene[GameNode] =
         match (self, other) {
             // プレイヤーの Hitbox が Vehicle と衝突 → スプライトを赤にする
@@ -89,6 +89,28 @@ instance AreaHandler[GameNode] {
                         GameNode.AnimSpriteNode(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite))
                     case other2 => other2
                 }, scene)
+            // プレイヤーの Hitbox が HomeSlot と衝突
+            case (GameNode.PlayerHitbox(_), GameNode.HomeSlot(r)) =>
+                // 充填済みスロットに入ったら死亡（スプライトを赤にして checkDeath で処理）
+                if (r#filled)
+                    Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
+                        case GameNode.AnimSpriteNode(sprite) =>
+                            GameNode.AnimSpriteNode(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite))
+                        case other2 => other2
+                    }, scene)
+                else
+                    scene
+                        |> Scene.mapAt(otherPath, node -> match node {
+                            case GameNode.HomeSlot(hr) =>
+                                GameNode.HomeSlot({filled = true | hr})
+                            case other2 => other2
+                        })
+                        |> Scene.mapAt(List.append(otherPath, "sprite" :: Nil), node -> match node {
+                            case GameNode.SpriteNode(sprite) =>
+                                GameNode.SpriteNode(Sprite2D.setTexture("HomeFrog", sprite))
+                            case other2 => other2
+                        })
+                        |> Game.resetPlayerPosition
             case _ => scene
         }
 }
@@ -528,7 +550,7 @@ mod Game {
                 let area = Area2D.make({x = slotX, y = homeZoneY()}, shape)
                     |> CanvasItem.hide
                     |> Area2D.setMonitoring(false)
-                    |> Area2D.setMonitorable(false);
+                    |> Area2D.setMonitorable(true);
                 acc
                     |> Scene.addNode(name,
                         GameNode.HomeSlot({area = area, filled = false}))
@@ -542,61 +564,30 @@ mod Game {
     // ホームスロット判定
     // ========================================================================
 
-    pub def tryFillHomeSlot(state: GameState): GameState =
-        let target = getPlayerTarget(state#scene);
-        let playerPos = Scene.globalPosition("player", state#scene);
-        let arrived = Vec2.distanceTo(playerPos, target) < 2.0f32;
-        if (not arrived or target#y >= homeZoneY() + homeZoneH()) state
-        else {
-            let result = homeSlotXPositions()
-                |> List.zipWithIndex
-                |> List.foldLeft((best, pair) -> {
-                    let (idx, slotX) = pair;
-                    let slotName = "home${idx}";
-                    match Scene.get(slotName, state#scene) {
-                        case Some(GameNode.HomeSlot(r)) =>
-                            if (r#filled) best
-                            else {
-                                let dist = Float32.abs(target#x - slotX);
-                                match best {
-                                    case None => Some((idx, slotName, dist))
-                                    case Some((_, _, bestDist)) =>
-                                        if (dist < bestDist) Some((idx, slotName, dist))
-                                        else best
-                                }
-                            }
-                        case _ => best
-                    }
-                }, (None: Option[(Int32, String, Float32)]));
-            match result {
-                case None => state
-                case Some((_idx, slotName, _dist)) =>
-                    let newScene = Scene.mapAt(slotName :: Nil, node -> match node {
-                        case GameNode.HomeSlot(r) =>
-                            GameNode.HomeSlot({filled = true | r})
-                        case other => other
-                    }, state#scene)
-                        |> Scene.mapAt(slotName :: "sprite" :: Nil, node -> match node {
-                            case GameNode.SpriteNode(sprite) =>
-                                GameNode.SpriteNode(Sprite2D.setTexture("HomeFrog", sprite))
-                            case other => other
-                        })
-                        |> resetPlayerPosition;
-                    let newPhase = if (allHomesFilled(newScene)) GamePhase.Win else state#phase;
-                    { scene = newScene, gameTimer = Timer.start(state#gameTimer), phase = newPhase | state }
-            }
-        }
-
-    pub def allHomesFilled(scene: Scene[GameNode]): Bool =
+    /// 充填済みホームスロットの数を返す
+    pub def countFilledHomes(scene: Scene[GameNode]): Int32 =
         homeSlotXPositions()
             |> List.zipWithIndex
-            |> List.forAll(pair -> {
+            |> List.foldLeft((count, pair) -> {
                 let (idx, _) = pair;
                 match Scene.get("home${idx}", scene) {
-                    case Some(GameNode.HomeSlot(r)) => r#filled
-                    case _ => false
+                    case Some(GameNode.HomeSlot(r)) => if (r#filled) count + 1 else count
+                    case _ => count
                 }
-            })
+            }, 0)
+
+    /// 全ホームスロットが充填済みかを返す
+    pub def allHomesFilled(scene: Scene[GameNode]): Bool =
+        countFilledHomes(scene) == List.length(homeSlotXPositions())
+
+    /// AreaHandler によるスロット充填後の後処理。
+    /// 充填数が増えていたらタイマーをリセットし、全充填なら Win に遷移する。
+    pub def checkHomeCompletion(prevFilledCount: Int32, state: GameState): GameState =
+        let currentCount = countFilledHomes(state#scene);
+        if (currentCount > prevFilledCount) {
+            let newPhase = if (allHomesFilled(state#scene)) GamePhase.Win else state#phase;
+            { gameTimer = Timer.start(state#gameTimer), phase = newPhase | state }
+        } else state
 
     // ========================================================================
     // キーボード入力
@@ -649,37 +640,35 @@ mod Game {
         match Scene.get("player", state#scene) {
             case Some(GameNode.Player(r)) =>
                 let currKeys = collectPressedKeys();
-                if (state#phase != GamePhase.Playing) {
-                    let newScene = Scene.mapAt("player" :: Nil, node -> match node {
+                if (state#phase != GamePhase.Playing)
+                    { scene = Scene.mapAt("player" :: Nil, node -> match node {
                         case GameNode.Player(pr) => GameNode.Player({prevKeys = currKeys | pr})
                         case other => other
-                    }, state#scene);
-                    { scene = newScene | state }
-                }
+                    }, state#scene) | state }
                 else {
                     let justPressed = justPressedKeys(currKeys, r#prevKeys);
                     match inputDirection(justPressed) {
                         case None =>
-                            let newScene = Scene.mapAt("player" :: Nil, node -> match node {
+                            { scene = Scene.mapAt("player" :: Nil, node -> match node {
                                 case GameNode.Player(pr) => GameNode.Player({prevKeys = currKeys | pr})
                                 case other => other
-                            }, state#scene);
-                            { scene = newScene | state }
+                            }, state#scene) | state }
                         case Some(dir) =>
                             let nt = Vec2.clamp(
                                 Vec2.add(r#target, Vec2.mul(dir, tileSize())),
                                 playerMin(), playerMax());
-                            let newScene = Scene.mapAt("player" :: Nil, node -> match node {
-                                case GameNode.Player(pr) =>
-                                    GameNode.Player({prevKeys = currKeys, target = nt | pr})
-                                case other => other
-                            }, state#scene)
+                            { scene = state#scene
+                                |> Scene.mapAt("player" :: Nil, node -> match node {
+                                    case GameNode.Player(pr) =>
+                                        GameNode.Player({prevKeys = currKeys, target = nt | pr})
+                                    case other => other
+                                })
                                 |> Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
                                     case GameNode.AnimSpriteNode(sprite) =>
                                         GameNode.AnimSpriteNode(Node2D.setRotation(directionToRotation(dir), sprite))
                                     case other => other
-                                });
-                            { scene = newScene | state }
+                                })
+                              | state }
                     }
                 }
             case _ => state
@@ -725,14 +714,13 @@ mod Game {
             case None => state
             case Some(platformVx) =>
                 let shift: Vec2.Vec2 = {x = platformVx * dt, y = 0.0f32};
-                let newScene = Scene.mapAt("player" :: Nil, node -> match node {
+                { scene = Scene.mapAt("player" :: Nil, node -> match node {
                     case GameNode.Player(r) =>
-                        let currentPos = Node2D.getPosition(r#body);
-                        let newBody = Node2D.setPosition(Vec2.add(currentPos, shift), r#body);
-                        GameNode.Player({body = newBody, target = Vec2.add(r#target, shift) | r})
+                        GameNode.Player({
+                            body = Node2D.setPosition(Vec2.add(Node2D.getPosition(r#body), shift), r#body),
+                            target = Vec2.add(r#target, shift) | r})
                     case other => other
-                }, state#scene);
-                { scene = newScene | state }
+                }, state#scene) | state }
         }
 
     // ========================================================================
@@ -741,8 +729,9 @@ mod Game {
 
     /// 死亡演出を開始する（アニメーション変更 + deathTimer 開始 + phase を Dying に遷移）
     pub def triggerDeath(color: Color, state: GameState): GameState =
-        let newScene = playDeathAnim(color, state#scene);
-        { scene = newScene, deathTimer = Timer.start(state#deathTimer), phase = GamePhase.Dying | state }
+        { scene = playDeathAnim(color, state#scene),
+          deathTimer = Timer.start(state#deathTimer),
+          phase = GamePhase.Dying | state }
 
     pub def playDeathAnim(color: Color, scene: Scene[GameNode]): Scene[GameNode] =
         Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
@@ -838,17 +827,18 @@ mod Game {
     def updateHUD(state: GameState): GameState =
         let timeInt = Float64.truncateToInt32(
             Float32.toFloat64(Float32.max(0.0f32, Timer.getTimeLeft(state#gameTimer))));
-        let scene1 = Scene.mapAt("timerLabel" :: Nil, node -> match node {
-            case GameNode.Label2DNode(label) =>
-                GameNode.Label2DNode(Label2D.setText("TIME: ${timeInt}", label))
-            case other => other
-        }, state#scene);
-        let scene2 = Scene.mapAt("livesLabel" :: Nil, node -> match node {
-            case GameNode.Label2DNode(label) =>
-                GameNode.Label2DNode(Label2D.setText("LIVES: ${state#lives}", label))
-            case other => other
-        }, scene1);
-        { scene = scene2 | state }
+        { scene = state#scene
+            |> Scene.mapAt("timerLabel" :: Nil, node -> match node {
+                case GameNode.Label2DNode(label) =>
+                    GameNode.Label2DNode(Label2D.setText("TIME: ${timeInt}", label))
+                case other => other
+            })
+            |> Scene.mapAt("livesLabel" :: Nil, node -> match node {
+                case GameNode.Label2DNode(label) =>
+                    GameNode.Label2DNode(Label2D.setText("LIVES: ${state#lives}", label))
+                case other => other
+            })
+          | state }
 
     // ========================================================================
     // メインループ
@@ -864,38 +854,37 @@ mod Game {
             let dt = Engine.Game.getDeltaTime();
             match state#phase {
                 case GamePhase.Playing =>
-                    let newScene = GameEngine.updateWithAreaHandler(dt, false, state#scene);
-                    let finalState = { scene = newScene | state }
+                    let prevFilled = countFilledHomes(state#scene);
+                    { scene = GameEngine.updateWithAreaHandler(dt, false, state#scene) | state }
                         |> handlePlayerInput
                         |> processTimers(dt)
                         |> applyPlatformRiding(dt)
-                        |> tryFillHomeSlot
+                        |> checkHomeCompletion(prevFilled)
                         |> checkDeath
                         |> checkDrown
                         |> handleTimerTimeouts
-                        |> updateHUD;
-                    gameLoop(fontAtlas, finalState)
+                        |> updateHUD
+                        |> gameLoop(fontAtlas)
                 case GamePhase.Dying =>
-                    let newScene = GameEngine.updateWithAreaHandler(dt, false, state#scene);
-                    let finalState = { scene = newScene | state }
+                    { scene = GameEngine.updateWithAreaHandler(dt, false, state#scene) | state }
                         |> processTimers(dt)
                         |> handleTimerTimeouts
-                        |> updateHUD;
-                    gameLoop(fontAtlas, finalState)
+                        |> updateHUD
+                        |> gameLoop(fontAtlas)
                 case GamePhase.GameOver =>
                     if (Engine.Game.isKeyPressed(Engine.Key.Enter))
                         gameLoop(fontAtlas, buildState(fontAtlas))
-                    else {
-                        let newScene = GameEngine.updateWithAreaHandler(dt, true, state#scene);
-                        gameLoop(fontAtlas, { scene = newScene | state } |> updateHUD)
-                    }
+                    else
+                        { scene = GameEngine.updateWithAreaHandler(dt, true, state#scene) | state }
+                            |> updateHUD
+                            |> gameLoop(fontAtlas)
                 case GamePhase.Win =>
                     if (Engine.Game.isKeyPressed(Engine.Key.Enter))
                         gameLoop(fontAtlas, buildState(fontAtlas))
-                    else {
-                        let newScene = GameEngine.updateWithAreaHandler(dt, true, state#scene);
-                        gameLoop(fontAtlas, { scene = newScene | state } |> updateHUD)
-                    }
+                    else
+                        { scene = GameEngine.updateWithAreaHandler(dt, true, state#scene) | state }
+                            |> updateHUD
+                            |> gameLoop(fontAtlas)
             }
         }
 
