@@ -115,16 +115,16 @@ pub mod Scene {
         Scene.Scene(Map.empty())
 
     /// ルートノードとして追加する
-    pub def addNode(name: NodeName, node: n, scene: Scene[n]): Scene[n] with Order[n] =
+    pub def addNode(name: NodeName, node: n, scene: Scene[n]): Scene[n] =
         let entry = SceneEntry.SceneEntry({ node = node, children = Map.empty() });
         Scene.Scene(Map.insert(name, entry, roots(scene)))
 
     /// 親がルートの子追加（既存互換）
-    pub def addChild(parentName: NodeName, childName: NodeName, node: n, scene: Scene[n]): Scene[n] with Order[n] =
+    pub def addChild(parentName: NodeName, childName: NodeName, node: n, scene: Scene[n]): Scene[n] =
         addChildAt(parentName :: Nil, childName, node, scene)
 
     /// 任意深さの子追加
-    pub def addChildAt(parentPath: NodePath, childName: NodeName, node: n, scene: Scene[n]): Scene[n] with Order[n] =
+    pub def addChildAt(parentPath: NodePath, childName: NodeName, node: n, scene: Scene[n]): Scene[n] =
         match getEntryAt(parentPath, scene) {
             case None => scene
             case Some(_) =>
@@ -354,7 +354,7 @@ pub mod Scene {
 
     /// 可視ノードを Drawable のリストに変換する
     /// 各ノードが複数 Drawable を返せるよう flatMap ベースで処理する
-    pub def toDrawables(scene: Scene[n]): List[Engine.Drawable] with Node2D[n], Order[n], Engine.Renderable[n] =
+    pub def toDrawables(scene: Scene[n]): List[Engine.Drawable] with Node2D[n], Engine.Renderable[n] =
         preorderPaths(scene)
             |> List.flatMap(path ->
                 match getAt(path, scene) {

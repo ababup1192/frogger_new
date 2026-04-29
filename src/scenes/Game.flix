@@ -49,60 +49,6 @@ instance Eq[GameNode] {
     }
 }
 
-instance Order[GameNode] {
-    pub def compare(a: GameNode, b: GameNode): Comparison =
-        let tag = node -> match node {
-            case GameNode.Player(_)          => 0
-            case GameNode.HomeSlot(_)        => 1
-            case GameNode.Vehicle(_)         => 2
-            case GameNode.LogPlatform(_)     => 3
-            case GameNode.TurtlePlatform(_)  => 4
-            case GameNode.AnimSpriteNode(_)  => 5
-            case GameNode.SpriteNode(_)      => 6
-            case GameNode.AreaNode(_)        => 7
-            case GameNode.Marker2DNode(_)    => 8
-            case GameNode.TimerNode(_)       => 9
-            case GameNode.Label2DNode(_)     => 10
-        };
-        match Order.compare(tag(a), tag(b)) {
-            case Comparison.EqualTo => match (a, b) {
-                case (GameNode.Player(a1), GameNode.Player(b1)) =>
-                    Order.compare(a1#body, b1#body)
-                case (GameNode.HomeSlot(a1), GameNode.HomeSlot(b1)) =>
-                    Order.compare(a1#area, b1#area)
-                case (GameNode.Vehicle(a1), GameNode.Vehicle(b1)) =>
-                    match Order.compare(a1#area, b1#area) {
-                        case Comparison.EqualTo => Order.compare(a1#vx, b1#vx)
-                        case c => c
-                    }
-                case (GameNode.LogPlatform(a1), GameNode.LogPlatform(b1)) =>
-                    match Order.compare(a1#area, b1#area) {
-                        case Comparison.EqualTo => Order.compare(a1#vx, b1#vx)
-                        case c => c
-                    }
-                case (GameNode.TurtlePlatform(a1), GameNode.TurtlePlatform(b1)) =>
-                    match Order.compare(a1#area, b1#area) {
-                        case Comparison.EqualTo => Order.compare(a1#vx, b1#vx)
-                        case c => c
-                    }
-                case (GameNode.AnimSpriteNode(a1), GameNode.AnimSpriteNode(b1)) =>
-                    Order.compare(a1, b1)
-                case (GameNode.SpriteNode(a1), GameNode.SpriteNode(b1)) =>
-                    Order.compare(a1, b1)
-                case (GameNode.AreaNode(a1), GameNode.AreaNode(b1)) =>
-                    Order.compare(a1, b1)
-                case (GameNode.Marker2DNode(a1), GameNode.Marker2DNode(b1)) =>
-                    Order.compare(a1, b1)
-                case (GameNode.TimerNode(a1), GameNode.TimerNode(b1)) =>
-                    Order.compare(a1, b1)
-                case (GameNode.Label2DNode(a1), GameNode.Label2DNode(b1)) =>
-                    Order.compare(a1, b1)
-                case _ => Comparison.EqualTo
-            }
-            case c => c
-        }
-}
-
 // ── Node 実装 ──
 
 instance Node[GameNode] {

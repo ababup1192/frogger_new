@@ -5,7 +5,7 @@
 ///   addNode → ready → [毎フレーム] process(delta)
 ///
 /// 全メソッドにデフォルト実装があり、必要なものだけオーバーライドすればよい。
-pub trait Node[n] with Order[n] {
+pub trait Node[n] {
 
     // ── Scene アクセス ──
 

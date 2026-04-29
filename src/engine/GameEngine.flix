@@ -34,6 +34,6 @@ mod GameEngine {
 
     /// 描画: Scene.toDrawables で Drawable リストを取得し、描画する
     pub def render(scene: Scene[n]): Unit \ Engine.Game
-            with Node2D[n], Order[n], Engine.Renderable[n] =
+            with Node2D[n], Engine.Renderable[n] =
         Scene.toDrawables(scene) |> Engine.Game.render
 }
