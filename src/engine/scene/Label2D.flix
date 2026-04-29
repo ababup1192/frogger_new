@@ -21,39 +21,6 @@ pub enum Label2D {
     })
 }
 
-instance ToString[Label2D] {
-    pub def toString(label: Label2D): String =
-        let Label2D.Label2D(r) = label;
-        "Label2D(text=\"${r#text}\")"
-}
-
-instance Eq[Label2D] {
-    pub def eq(a: Label2D, b: Label2D): Bool =
-        let Label2D.Label2D(ra) = a;
-        let Label2D.Label2D(rb) = b;
-        ra#text == rb#text and
-        ra#fontAtlas#textureName == rb#fontAtlas#textureName and
-        ra#fontSize == rb#fontSize and
-        ra#centered == rb#centered and
-        ra#position#x == rb#position#x and
-        ra#position#y == rb#position#y and
-        ra#visible == rb#visible and
-        ra#zIndex == rb#zIndex
-}
-
-instance Order[Label2D] {
-    pub def compare(a: Label2D, b: Label2D): Comparison =
-        let Label2D.Label2D(ra) = a;
-        let Label2D.Label2D(rb) = b;
-        match Order.compare(ra#zIndex, rb#zIndex) {
-            case Comparison.EqualTo => match Order.compare(ra#position#x, rb#position#x) {
-                case Comparison.EqualTo => Order.compare(ra#position#y, rb#position#y)
-                case c => c
-            }
-            case c => c
-        }
-}
-
 mod Label2D {
     /// テキストとフォントアトラスから Label2D を生成する
     pub def make(text: String, fontAtlas: FontAtlas, fontSize: Float32): Label2D =

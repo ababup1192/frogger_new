@@ -29,6 +29,14 @@ pub trait Node[n] {
     pub def process(_delta: Float64, self: n, _path: NodePath, scene: Scene[n]): (n, Scene[n]) =
             (self, scene)
 
+    // ── タイムアウト検出 ──
+
+    /// timeout イベントが保留中か
+    pub def isTimedOut(_self: n): Bool = false
+
+    /// timeout フラグをクリア
+    pub def clearTimedOut(self: n): n = self
+
     // ── ポーズ制御 ──
 
     /// このノードの ProcessMode を返す（デフォルト: Pausable）

@@ -22,33 +22,6 @@ pub enum CharacterBody2D {
     })
 }
 
-instance Eq[CharacterBody2D] {
-    pub def eq(a: CharacterBody2D, b: CharacterBody2D): Bool =
-        let CharacterBody2D.CharacterBody2D(ra) = a;
-        let CharacterBody2D.CharacterBody2D(rb) = b;
-        ra#position#x == rb#position#x and ra#position#y == rb#position#y and
-        ra#rotation == rb#rotation and
-        ra#scale#x == rb#scale#x and ra#scale#y == rb#scale#y and
-        ra#skew == rb#skew and
-        ra#visible == rb#visible and ra#zIndex == rb#zIndex and
-        ra#modulate#r == rb#modulate#r and ra#modulate#g == rb#modulate#g and ra#modulate#b == rb#modulate#b and
-        ra#velocity#x == rb#velocity#x and ra#velocity#y == rb#velocity#y and
-        ra#moveSpeed == rb#moveSpeed
-}
-
-instance Order[CharacterBody2D] {
-    pub def compare(a: CharacterBody2D, b: CharacterBody2D): Comparison =
-        let CharacterBody2D.CharacterBody2D(ra) = a;
-        let CharacterBody2D.CharacterBody2D(rb) = b;
-        match Order.compare(ra#zIndex, rb#zIndex) {
-            case Comparison.EqualTo => match Order.compare(ra#position#x, rb#position#x) {
-                case Comparison.EqualTo => Order.compare(ra#position#y, rb#position#y)
-                case c => c
-            }
-            case c => c
-        }
-}
-
 mod CharacterBody2D {
 
     /// デフォルト値で CharacterBody2D を生成する

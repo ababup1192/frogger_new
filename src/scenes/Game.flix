@@ -35,6 +35,16 @@ instance Node[GameNode] {
             case _ => (self, scene)
         }
 
+    redef isTimedOut(self: GameNode): Bool = match self {
+        case GameNode.TimerNode(timer) => Timer.isTimedOut(timer)
+        case _ => false
+    }
+
+    redef clearTimedOut(self: GameNode): GameNode = match self {
+        case GameNode.TimerNode(timer) => GameNode.TimerNode(Timer.clearTimedOut(timer))
+        case other => other
+    }
+
     redef process(delta: Float64, self: GameNode, _path: NodePath,
                     scene: Scene[GameNode]): (GameNode, Scene[GameNode]) =
         let dt = Float64.truncateToFloat32(delta);
@@ -93,6 +103,25 @@ instance Node[GameNode] {
             case GameNode.TimerNode(timer) =>
                 (GameNode.TimerNode(Timer.process(dt, timer)), scene)
             case _ => (self, scene)
+        }
+}
+
+// ── TimerHandler 実装 ──
+
+instance TimerEvent.TimerHandler[GameNode] {
+    pub def onTimeout(timerPath: NodePath, _timer: GameNode, scene: Scene[GameNode]): Scene[GameNode] =
+        match List.head(timerPath) {
+            case Some("gameTimer") =>
+                // deathTimer が既に動いていれば何もしない（衝突死亡中）
+                match Scene.get("deathTimer", scene) {
+                    case Some(GameNode.TimerNode(t)) if Timer.isRunning(t) => scene
+                    case _ =>
+                        Game.playDeathAnim({r = 1.0f32, g = 1.0f32, b = 0.2f32}, scene)
+                            |> Game.startDeathTimer
+                }
+            case Some("deathTimer") =>
+                Game.respawnPlayerScene(scene)
+            case _ => scene
         }
 }
 
@@ -195,6 +224,78 @@ mod Game {
             prevKeys = Set.empty(),
             prevOverlaps = Set.empty()
         }
+
+    /// Frogger の初期シーンを構築する
+    pub def buildScene(fontAtlas: FontAtlas): Scene[GameNode] =
+        let green: Color = {r = 0.2f32, g = 0.55f32, b = 0.15f32};
+        let sw = screenW();
+        Scene.empty()
+            // ── 背景ゾーン (zIndex=-10: 最背面) ──
+            |> Scene.addNode("bgHome",
+                makeSolidBg(green, {x = 0.0f32, y = homeZoneY()},
+                    width = sw, height = homeZoneH(), zIndex = -10))
+            |> Scene.addNode("bgWater",
+                makeTiledBg("Water", {x = 0.0f32, y = waterZoneY()},
+                    width = sw, height = waterZoneH(), zIndex = -10))
+            |> Scene.addNode("bgMedian",
+                makeTiledBg("Median", {x = 0.0f32, y = medianZoneY()},
+                    width = sw, height = medianZoneH(), zIndex = -10))
+            |> Scene.addNode("bgRoad",
+                makeTiledBg("Road", {x = 0.0f32, y = roadZoneY()},
+                    width = sw, height = roadZoneH(), zIndex = -10))
+            |> Scene.addNode("bgStart",
+                makeSolidBg(green, {x = 0.0f32, y = startZoneY()},
+                    width = sw, height = startZoneH(), zIndex = -10))
+            // ── ホームスロット ──
+            |> addAllHomeSlots
+            // ── プレイヤー (CharacterBody2D + AnimatedSprite2D + Hitbox) ──
+            |> Scene.addNode("player",
+                GameNode.Player({
+                    body = CanvasItem.hide(CharacterBody2D.make(playerStart(), moveSpeed = moveSpeed()))
+                }))
+            // ── プレイヤーのターゲット位置（Marker2D） ──
+            |> Scene.addNode("playerTarget",
+                GameNode.Marker2DNode(Marker2D.make(playerStart())))
+            |> Scene.addChild("player", "Sprite",
+                GameNode.AnimSpriteNode(
+                    AnimatedSprite2D.make(
+                        Map#{
+                            "idle" => ("FroggerIdle" :: "FroggerLeap" :: Nil),
+                            "dead" => ("FroggerDead" :: Nil)
+                        },
+                        initialAnimation = "idle",
+                        fps = 4.0f32,
+                        {x = 0.0f32, y = 0.0f32},
+                        {x = 4.0f32, y = 4.0f32})))
+            |> Scene.addChildAt("player" :: Nil, "Hitbox",
+                GameNode.AreaNode(
+                    CanvasItem.hide(
+                        Area2D.make({x = 16.0f32, y = 20.0f32},
+                            CollisionShape2D.RectShape2D({width = 32.0f32, height = 24.0f32})))))
+            // ── 車両 ──
+            |> addAllVehicles
+            // ── 丸太 ──
+            |> addAllLogs
+            // ── 亀 ──
+            |> addAllTurtles
+            // ── Timer ノード ──
+            |> Scene.addNode("gameTimer",
+                GameNode.TimerNode(
+                    Timer.make(30.0f32)
+                        |> Timer.setAutostart(true)))
+            |> Scene.addNode("deathTimer",
+                GameNode.TimerNode(Timer.make(2.0f32)))
+            // ── HUD Label ──
+            |> Scene.addNode("timerLabel",
+                GameNode.Label2DNode(
+                    Label2D.make("TIME: 30", fontAtlas, 24.0f32)
+                        |> Node2D.setPosition({x = 10.0f32, y = 900.0f32})
+                        |> CanvasItem.setZIndex(10)))
+            |> Scene.addNode("livesLabel",
+                GameNode.Label2DNode(
+                    Label2D.make("LIVES: 3", fontAtlas, 24.0f32)
+                        |> Node2D.setPosition({x = 10.0f32, y = 940.0f32})
+                        |> CanvasItem.setZIndex(10)))
 
     // ========================================================================
     // GameNode ヘルパー
@@ -851,77 +952,6 @@ mod Game {
     // シーン構築
     // ========================================================================
 
-    /// Frogger の初期シーンを構築する
-    pub def buildScene(fontAtlas: FontAtlas): Scene[GameNode] =
-        let green: Color = {r = 0.2f32, g = 0.55f32, b = 0.15f32};
-        let sw = screenW();
-        Scene.empty()
-            // ── 背景ゾーン (zIndex=-10: 最背面) ──
-            |> Scene.addNode("bgHome",
-                makeSolidBg(green, {x = 0.0f32, y = homeZoneY()},
-                    width = sw, height = homeZoneH(), zIndex = -10))
-            |> Scene.addNode("bgWater",
-                makeTiledBg("Water", {x = 0.0f32, y = waterZoneY()},
-                    width = sw, height = waterZoneH(), zIndex = -10))
-            |> Scene.addNode("bgMedian",
-                makeTiledBg("Median", {x = 0.0f32, y = medianZoneY()},
-                    width = sw, height = medianZoneH(), zIndex = -10))
-            |> Scene.addNode("bgRoad",
-                makeTiledBg("Road", {x = 0.0f32, y = roadZoneY()},
-                    width = sw, height = roadZoneH(), zIndex = -10))
-            |> Scene.addNode("bgStart",
-                makeSolidBg(green, {x = 0.0f32, y = startZoneY()},
-                    width = sw, height = startZoneH(), zIndex = -10))
-            // ── ホームスロット ──
-            |> addAllHomeSlots
-            // ── プレイヤー (CharacterBody2D + AnimatedSprite2D + Hitbox) ──
-            |> Scene.addNode("player",
-                GameNode.Player({
-                    body = CanvasItem.hide(CharacterBody2D.make(playerStart(), moveSpeed = moveSpeed()))
-                }))
-            // ── プレイヤーのターゲット位置（Marker2D） ──
-            |> Scene.addNode("playerTarget",
-                GameNode.Marker2DNode(Marker2D.make(playerStart())))
-            |> Scene.addChild("player", "Sprite",
-                GameNode.AnimSpriteNode(
-                    AnimatedSprite2D.make(
-                        Map#{
-                            "idle" => ("FroggerIdle" :: "FroggerLeap" :: Nil),
-                            "dead" => ("FroggerDead" :: Nil)
-                        },
-                        initialAnimation = "idle",
-                        fps = 4.0f32,
-                        {x = 0.0f32, y = 0.0f32},
-                        {x = 4.0f32, y = 4.0f32})))
-            |> Scene.addChildAt("player" :: Nil, "Hitbox",
-                GameNode.AreaNode(
-                    CanvasItem.hide(
-                        Area2D.make({x = 16.0f32, y = 20.0f32},
-                            CollisionShape2D.RectShape2D({width = 32.0f32, height = 24.0f32})))))
-            // ── 車両 ──
-            |> addAllVehicles
-            // ── 丸太 ──
-            |> addAllLogs
-            // ── 亀 ──
-            |> addAllTurtles
-            // ── Timer ノード ──
-            |> Scene.addNode("gameTimer",
-                GameNode.TimerNode(
-                    Timer.make(30.0f32)
-                        |> Timer.setAutostart(true)))
-            |> Scene.addNode("deathTimer",
-                GameNode.TimerNode(Timer.make(2.0f32)))
-            // ── HUD Label ──
-            |> Scene.addNode("timerLabel",
-                GameNode.Label2DNode(
-                    Label2D.make("TIME: 30", fontAtlas, 24.0f32)
-                        |> Node2D.setPosition({x = 10.0f32, y = 900.0f32})
-                        |> CanvasItem.setZIndex(10)))
-            |> Scene.addNode("livesLabel",
-                GameNode.Label2DNode(
-                    Label2D.make("LIVES: 3", fontAtlas, 24.0f32)
-                        |> Node2D.setPosition({x = 10.0f32, y = 940.0f32})
-                        |> CanvasItem.setZIndex(10)))
 }
 
 // ========================================================================

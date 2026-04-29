@@ -19,39 +19,6 @@ pub enum Marker2D {
     })
 }
 
-instance ToString[Marker2D] {
-    pub def toString(marker: Marker2D): String =
-        let Marker2D.Marker2D(r) = marker;
-        "Marker2D(pos=(${r#position#x}, ${r#position#y}))"
-}
-
-instance Eq[Marker2D] {
-    pub def eq(a: Marker2D, b: Marker2D): Bool =
-        let Marker2D.Marker2D(ra) = a;
-        let Marker2D.Marker2D(rb) = b;
-        ra#position#x == rb#position#x and
-        ra#position#y == rb#position#y and
-        ra#rotation == rb#rotation and
-        ra#scale#x == rb#scale#x and
-        ra#scale#y == rb#scale#y and
-        ra#skew == rb#skew and
-        ra#visible == rb#visible and
-        ra#zIndex == rb#zIndex
-}
-
-instance Order[Marker2D] {
-    pub def compare(a: Marker2D, b: Marker2D): Comparison =
-        let Marker2D.Marker2D(ra) = a;
-        let Marker2D.Marker2D(rb) = b;
-        match Order.compare(ra#zIndex, rb#zIndex) {
-            case Comparison.EqualTo => match Order.compare(ra#position#x, rb#position#x) {
-                case Comparison.EqualTo => Order.compare(ra#position#y, rb#position#y)
-                case c => c
-            }
-            case c => c
-        }
-}
-
 mod Marker2D {
     /// デフォルト値で Marker2D を生成する
     pub def make(position: Vec2.Vec2): Marker2D =

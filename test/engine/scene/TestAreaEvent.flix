@@ -10,7 +10,7 @@ def circleArea(x: Float32, y: Float32, r: Float32): Area2D =
 
 // ── processAndEmitHandled テスト用の sum type ──
 
-enum TestAreaNode with Eq, Order, ToString {
+enum TestAreaNode {
     case RedNode(Area2D)
     case BlueNode(Area2D)
 }

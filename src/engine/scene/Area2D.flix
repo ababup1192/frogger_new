@@ -24,46 +24,6 @@ pub enum Area2D {
     })
 }
 
-instance ToString[Area2D] {
-    pub def toString(area: Area2D): String =
-        let Area2D.Area2D(r) = area;
-        "Area2D(pos=(${r#position#x}, ${r#position#y}), monitoring=${r#monitoring})"
-}
-
-instance Eq[Area2D] {
-    pub def eq(a: Area2D, b: Area2D): Bool =
-        let Area2D.Area2D(ra) = a;
-        let Area2D.Area2D(rb) = b;
-        ra#position#x == rb#position#x and
-        ra#position#y == rb#position#y and
-        ra#rotation == rb#rotation and
-        ra#scale#x == rb#scale#x and
-        ra#scale#y == rb#scale#y and
-        ra#skew == rb#skew and
-        ra#visible == rb#visible and
-        ra#zIndex == rb#zIndex and
-        ra#monitoring == rb#monitoring and
-        ra#monitorable == rb#monitorable and
-        ra#priority == rb#priority and
-        ra#collisionShape == rb#collisionShape
-}
-
-instance Order[Area2D] {
-    pub def compare(a: Area2D, b: Area2D): Comparison =
-        let Area2D.Area2D(ra) = a;
-        let Area2D.Area2D(rb) = b;
-        match Order.compare(ra#priority, rb#priority) {
-            case Comparison.EqualTo => match Order.compare(ra#zIndex, rb#zIndex) {
-                case Comparison.EqualTo => match Order.compare(ra#position#x, rb#position#x) {
-                    case Comparison.EqualTo => Order.compare(ra#position#y, rb#position#y)
-                    case c => c
-                }
-                case c => c
-            }
-            case c => c
-        }
-}
-
 mod Area2D {
     /// デフォルト値で Area2D を生成する。
     /// monitoring / monitorable は共に true（Godot デフォルト準拠）。

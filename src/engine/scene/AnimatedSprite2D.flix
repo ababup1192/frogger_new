@@ -33,37 +33,6 @@ pub enum AnimatedSprite2D {
     })
 }
 
-instance Eq[AnimatedSprite2D] {
-    pub def eq(a: AnimatedSprite2D, b: AnimatedSprite2D): Bool =
-        let AnimatedSprite2D.AnimatedSprite2D(ra) = a;
-        let AnimatedSprite2D.AnimatedSprite2D(rb) = b;
-        ra#position#x == rb#position#x and ra#position#y == rb#position#y and
-        ra#rotation == rb#rotation and
-        ra#scale#x == rb#scale#x and ra#scale#y == rb#scale#y and
-        ra#visible == rb#visible and ra#zIndex == rb#zIndex and
-        ra#currentAnimation == rb#currentAnimation and
-        ra#currentFrame == rb#currentFrame and
-        ra#fps == rb#fps and ra#playing == rb#playing and
-        ra#centered == rb#centered and
-        ra#animations == rb#animations
-}
-
-instance Order[AnimatedSprite2D] {
-    pub def compare(a: AnimatedSprite2D, b: AnimatedSprite2D): Comparison =
-        let AnimatedSprite2D.AnimatedSprite2D(ra) = a;
-        let AnimatedSprite2D.AnimatedSprite2D(rb) = b;
-        match Order.compare(ra#zIndex, rb#zIndex) {
-            case Comparison.EqualTo => match Order.compare(ra#currentAnimation, rb#currentAnimation) {
-                case Comparison.EqualTo => match Order.compare(ra#position#x, rb#position#x) {
-                    case Comparison.EqualTo => Order.compare(ra#position#y, rb#position#y)
-                    case c => c
-                }
-                case c => c
-            }
-            case c => c
-        }
-}
-
 mod AnimatedSprite2D {
 
     /// AnimatedSprite2D を生成する

@@ -18,7 +18,10 @@ def testArea2DMakeDefaults(): Unit \ Assert =
 def testArea2DMakeShape(): Unit \ Assert =
     let shape = CollisionShape2D.CircleShape2D({radius = 16.0f32});
     let area = Area2D.make(Vec2.zero(), shape);
-    Assert.assertEq(expected = Some(shape), CollisionObject2D.getCollisionShape(area))
+    match CollisionObject2D.getCollisionShape(area) {
+        case Some(CollisionShape2D.CircleShape2D(r)) => Assert.assertEq(expected = 16.0f32, r#radius)
+        case _ => Assert.assertEq(expected = "Some(circle)", "None or wrong shape")
+    }
 
 // ========================================================================
 // Node2D
@@ -106,7 +109,12 @@ def testArea2DInScene(): Unit \ Assert =
                             CollisionShape2D.RectShape2D({width = 32.0f32, height = 32.0f32}));
     let scene = Scene.empty()
         |> Scene.addNode("hitbox", area);
-    Assert.assertEq(expected = Some(area), Scene.get("hitbox", scene))
+    match Scene.get("hitbox", scene) {
+        case Some(found) =>
+            let pos = Node2D.getPosition(found);
+            Assert.assertEq(expected = (50.0f32, 100.0f32), (pos#x, pos#y))
+        case None => Assert.assertEq(expected = "Some", "None")
+    }
 
 /// 親子関係で globalPosition が合算される
 @Test

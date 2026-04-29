@@ -24,40 +24,6 @@ pub enum Sprite2D {
     })
 }
 
-instance Eq[Sprite2D] {
-    pub def eq(a: Sprite2D, b: Sprite2D): Bool =
-        let Sprite2D.Sprite2D(ra) = a;
-        let Sprite2D.Sprite2D(rb) = b;
-        ra#texture == rb#texture and
-        ra#position#x == rb#position#x and
-        ra#position#y == rb#position#y and
-        ra#rotation == rb#rotation and
-        ra#scale#x == rb#scale#x and
-        ra#scale#y == rb#scale#y and
-        ra#skew == rb#skew and
-        ra#visible == rb#visible and
-        ra#zIndex == rb#zIndex and
-        ra#centered == rb#centered and
-        ra#flipH == rb#flipH and
-        ra#flipV == rb#flipV
-}
-
-instance Order[Sprite2D] {
-    pub def compare(a: Sprite2D, b: Sprite2D): Comparison =
-        let Sprite2D.Sprite2D(ra) = a;
-        let Sprite2D.Sprite2D(rb) = b;
-        match Order.compare(ra#zIndex, rb#zIndex) {
-            case Comparison.EqualTo => match Order.compare(ra#texture, rb#texture) {
-                case Comparison.EqualTo => match Order.compare(ra#position#x, rb#position#x) {
-                    case Comparison.EqualTo => Order.compare(ra#position#y, rb#position#y)
-                    case c => c
-                }
-                case c => c
-            }
-            case c => c
-        }
-}
-
 mod Sprite2D {
     /// デフォルト値で Sprite2D を生成する
     pub def make(texture: String, position: Vec2.Vec2, scale: Vec2.Vec2): Sprite2D =

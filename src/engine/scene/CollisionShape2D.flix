@@ -14,27 +14,6 @@ pub enum CollisionShape2D {
     case CircleShape2D({radius = Float32})
 }
 
-instance ToString[CollisionShape2D] {
-    pub def toString(shape: CollisionShape2D): String =
-        match shape {
-            case CollisionShape2D.RectShape2D(r) =>
-                "RectShape2D(${r#width}, ${r#height})"
-            case CollisionShape2D.CircleShape2D(r) =>
-                "CircleShape2D(${r#radius})"
-        }
-}
-
-instance Eq[CollisionShape2D] {
-    pub def eq(a: CollisionShape2D, b: CollisionShape2D): Bool =
-        match (a, b) {
-            case (CollisionShape2D.RectShape2D(ra), CollisionShape2D.RectShape2D(rb)) =>
-                ra#width == rb#width and ra#height == rb#height
-            case (CollisionShape2D.CircleShape2D(ra), CollisionShape2D.CircleShape2D(rb)) =>
-                ra#radius == rb#radius
-            case _ => false
-        }
-}
-
 mod CollisionShape2D {
 
     // ========================================================================

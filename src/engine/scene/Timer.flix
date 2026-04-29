@@ -14,6 +14,7 @@ pub enum Timer {
         running = Bool,
         oneShot = Bool,
         autostart = Bool,
+        timedOut = Bool,
         position = Vec2.Vec2,
         rotation = Float64,
         scale = Vec2.Vec2,
@@ -22,40 +23,6 @@ pub enum Timer {
         zIndex = Int32,
         modulate = Color
     })
-}
-
-instance ToString[Timer] {
-    pub def toString(timer: Timer): String =
-        let Timer.Timer(r) = timer;
-        "Timer(waitTime=${r#waitTime}, timeLeft=${r#timeLeft}, running=${r#running})"
-}
-
-instance Eq[Timer] {
-    pub def eq(a: Timer, b: Timer): Bool =
-        let Timer.Timer(ra) = a;
-        let Timer.Timer(rb) = b;
-        ra#waitTime == rb#waitTime and
-        ra#timeLeft == rb#timeLeft and
-        ra#running == rb#running and
-        ra#oneShot == rb#oneShot and
-        ra#autostart == rb#autostart and
-        ra#position#x == rb#position#x and
-        ra#position#y == rb#position#y and
-        ra#visible == rb#visible and
-        ra#zIndex == rb#zIndex
-}
-
-instance Order[Timer] {
-    pub def compare(a: Timer, b: Timer): Comparison =
-        let Timer.Timer(ra) = a;
-        let Timer.Timer(rb) = b;
-        match Order.compare(ra#zIndex, rb#zIndex) {
-            case Comparison.EqualTo => match Order.compare(ra#waitTime, rb#waitTime) {
-                case Comparison.EqualTo => Order.compare(ra#timeLeft, rb#timeLeft)
-                case c => c
-            }
-            case c => c
-        }
 }
 
 mod Timer {
@@ -68,6 +35,7 @@ mod Timer {
             running = false,
             oneShot = true,
             autostart = false,
+            timedOut = false,
             position = Vec2.zero(),
             rotation = 0.0,
             scale = {x = 1.0f32, y = 1.0f32},
@@ -117,6 +85,7 @@ mod Timer {
 
     /// 毎フレームの更新処理
     /// running かつ timeLeft > 0 なら dt 分減算。0 以下で oneShot なら停止、でなければ waitTime にリセット
+    /// タイマー満了時に timedOut フラグを立てる
     pub def process(dt: Float32, timer: Timer): Timer =
         let Timer.Timer(r) = timer;
         if (not r#running or r#timeLeft <= 0.0f32) timer
@@ -124,12 +93,22 @@ mod Timer {
             let newTimeLeft = r#timeLeft - dt;
             if (newTimeLeft <= 0.0f32) {
                 if (r#oneShot)
-                    Timer.Timer({ timeLeft = 0.0f32, running = false | r })
+                    Timer.Timer({ timeLeft = 0.0f32, running = false, timedOut = true | r })
                 else
-                    Timer.Timer({ timeLeft = r#waitTime | r })
+                    Timer.Timer({ timeLeft = r#waitTime, timedOut = true | r })
             } else
                 Timer.Timer({ timeLeft = newTimeLeft | r })
         }
+
+    /// タイマーがタイムアウトしたかどうか
+    pub def isTimedOut(timer: Timer): Bool =
+        let Timer.Timer(r) = timer;
+        r#timedOut
+
+    /// timedOut フラグをクリアする
+    pub def clearTimedOut(timer: Timer): Timer =
+        let Timer.Timer(r) = timer;
+        Timer.Timer({ timedOut = false | r })
 
     /// ready ライフサイクル: autostart なら running=true
     pub def ready(timer: Timer): Timer =
