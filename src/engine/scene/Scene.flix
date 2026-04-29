@@ -1,11 +1,10 @@
 pub type alias NodeName = String
 pub type alias NodePath = List[NodeName]
 
-/// ノードエントリ: エンジンノード + ゲーム状態 + 子ノードを再帰的に内包する
+/// ノードエントリ: エンジンノード（ゲーム状態含む） + 子ノードを再帰的に内包する
 pub enum SceneEntry[s] {
     case SceneEntry({
-        engineNode = EngineNode,
-        state = s,
+        engineNode = EngineNode[s],
         children = Map[NodeName, SceneEntry[s]]
     })
 }
@@ -51,14 +50,9 @@ pub mod Scene {
         Scene.Scene({ prevOverlaps = overlaps | r })
 
     /// SceneEntry のエンジンノードを取り出す
-    def entryEngineNode(entry: SceneEntry[s]): EngineNode =
+    def entryEngineNode(entry: SceneEntry[s]): EngineNode[s] =
         let SceneEntry.SceneEntry(r) = entry;
         r#engineNode
-
-    /// SceneEntry のゲーム状態を取り出す
-    def entryState(entry: SceneEntry[s]): s =
-        let SceneEntry.SceneEntry(r) = entry;
-        r#state
 
     /// SceneEntry の children を取り出す
     def entryChildren(entry: SceneEntry[s]): Map[NodeName, SceneEntry[s]] =
@@ -141,22 +135,22 @@ pub mod Scene {
     pub def empty(): Scene[s] =
         Scene.Scene({ nodes = Map.empty(), readied = false, prevOverlaps = Set.empty() })
 
-    /// ルートノードとして追加する
-    pub def addNode(name: NodeName, engineNode: EngineNode, state: s, scene: Scene[s]): Scene[s] =
+    /// ルートノードとして追加する（state は EngineNode[s] 内に含まれる）
+    pub def addNode(name: NodeName, engineNode: EngineNode[s], scene: Scene[s]): Scene[s] =
         let Scene.Scene(r) = scene;
-        let entry = SceneEntry.SceneEntry({ engineNode = engineNode, state = state, children = Map.empty() });
+        let entry = SceneEntry.SceneEntry({ engineNode = engineNode, children = Map.empty() });
         Scene.Scene({ nodes = Map.insert(name, entry, r#nodes) | r })
 
     /// 親がルートの子追加
-    pub def addChild(parentName: NodeName, childName: NodeName, engineNode: EngineNode, state: s, scene: Scene[s]): Scene[s] =
-        addChildAt(parentName :: Nil, childName, engineNode, state, scene)
+    pub def addChild(parentName: NodeName, childName: NodeName, engineNode: EngineNode[s], scene: Scene[s]): Scene[s] =
+        addChildAt(parentName :: Nil, childName, engineNode, scene)
 
     /// 任意深さの子追加
-    pub def addChildAt(parentPath: NodePath, childName: NodeName, engineNode: EngineNode, state: s, scene: Scene[s]): Scene[s] =
+    pub def addChildAt(parentPath: NodePath, childName: NodeName, engineNode: EngineNode[s], scene: Scene[s]): Scene[s] =
         match getEntryAt(parentPath, scene) {
             case None => scene
             case Some(_) =>
-                let childEntry = SceneEntry.SceneEntry({ engineNode = engineNode, state = state, children = Map.empty() });
+                let childEntry = SceneEntry.SceneEntry({ engineNode = engineNode, children = Map.empty() });
                 modifyAt(parentPath, entry ->
                     let SceneEntry.SceneEntry(r) = entry;
                     SceneEntry.SceneEntry({ children = Map.insert(childName, childEntry, r#children) | r }),
@@ -169,15 +163,11 @@ pub mod Scene {
 
     /// パスをたどってゲーム状態を取得
     pub def getState(path: NodePath, scene: Scene[s]): Option[s] =
-        getEntryAt(path, scene) |> Option.map(entryState)
+        getEntryAt(path, scene) |> Option.map(entry -> EngineNode.getState(entryEngineNode(entry)))
 
     /// パスをたどってエンジンノードを取得
-    pub def getEngineNode(path: NodePath, scene: Scene[s]): Option[EngineNode] =
+    pub def getEngineNode(path: NodePath, scene: Scene[s]): Option[EngineNode[s]] =
         getEntryAt(path, scene) |> Option.map(entryEngineNode)
-
-    /// パスをたどって (EngineNode, s) のペアを取得
-    pub def getAt(path: NodePath, scene: Scene[s]): Option[(EngineNode, s)] =
-        getEntryAt(path, scene) |> Option.map(entry -> (entryEngineNode(entry), entryState(entry)))
 
     /// ルートのゲーム状態を取得（後方互換）
     pub def get(name: NodeName, scene: Scene[s]): Option[s] =
@@ -189,23 +179,13 @@ pub mod Scene {
 
     /// パスをたどってゲーム状態を更新
     pub def setState(path: NodePath, state: s, scene: Scene[s]): Scene[s] =
-        modifyAt(path, entry ->
-            let SceneEntry.SceneEntry(r) = entry;
-            SceneEntry.SceneEntry({ state = state | r }),
-            scene)
+        mapEngineNode(path, en -> EngineNode.setState(state, en), scene)
 
     /// パスをたどってエンジンノードを更新
-    pub def setEngineNode(path: NodePath, engineNode: EngineNode, scene: Scene[s]): Scene[s] =
+    pub def setEngineNode(path: NodePath, engineNode: EngineNode[s], scene: Scene[s]): Scene[s] =
         modifyAt(path, entry ->
             let SceneEntry.SceneEntry(r) = entry;
             SceneEntry.SceneEntry({ engineNode = engineNode | r }),
-            scene)
-
-    /// パスをたどって EngineNode と状態を同時に更新
-    pub def setAt(path: NodePath, engineNode: EngineNode, state: s, scene: Scene[s]): Scene[s] =
-        modifyAt(path, entry ->
-            let SceneEntry.SceneEntry(r) = entry;
-            SceneEntry.SceneEntry({ engineNode = engineNode, state = state | r }),
             scene)
 
     /// ルート更新（後方互換）— 状態のみ更新
@@ -218,24 +198,13 @@ pub mod Scene {
 
     /// パスで指定されたノードのゲーム状態に関数を適用する
     pub def mapState(path: NodePath, f: s -> s, scene: Scene[s]): Scene[s] =
-        modifyAt(path, entry ->
-            let SceneEntry.SceneEntry(r) = entry;
-            SceneEntry.SceneEntry({ state = f(r#state) | r }),
-            scene)
+        mapEngineNode(path, en -> EngineNode.mapState(f, en), scene)
 
     /// パスで指定されたノードのエンジンノードに関数を適用する
-    pub def mapEngineNode(path: NodePath, f: EngineNode -> EngineNode, scene: Scene[s]): Scene[s] =
+    pub def mapEngineNode(path: NodePath, f: EngineNode[s] -> EngineNode[s], scene: Scene[s]): Scene[s] =
         modifyAt(path, entry ->
             let SceneEntry.SceneEntry(r) = entry;
             SceneEntry.SceneEntry({ engineNode = f(r#engineNode) | r }),
-            scene)
-
-    /// パスで指定されたノードの (EngineNode, s) に関数を適用する
-    pub def mapAt(path: NodePath, f: (EngineNode, s) -> (EngineNode, s), scene: Scene[s]): Scene[s] =
-        modifyAt(path, entry ->
-            let SceneEntry.SceneEntry(r) = entry;
-            let (newEn, newSt) = f(r#engineNode, r#state);
-            SceneEntry.SceneEntry({ engineNode = newEn, state = newSt | r }),
             scene)
 
     // ========================================================================
@@ -266,11 +235,11 @@ pub mod Scene {
 
     /// ルートノードのゲーム状態を Map で返す
     pub def states(scene: Scene[s]): Map[NodeName, s] =
-        Map.map(entryState, roots(scene))
+        Map.map(entry -> EngineNode.getState(entryEngineNode(entry)), roots(scene))
 
-    /// ルートノードの (EngineNode, s) ペアを Map で返す
-    pub def nodes(scene: Scene[s]): Map[NodeName, (EngineNode, s)] =
-        Map.map(entry -> (entryEngineNode(entry), entryState(entry)), roots(scene))
+    /// ルートノードの EngineNode を Map で返す
+    pub def nodes(scene: Scene[s]): Map[NodeName, EngineNode[s]] =
+        Map.map(entryEngineNode, roots(scene))
 
     /// 全ノード数（ツリー全体の再帰カウント）
     pub def nodeCount(scene: Scene[s]): Int32 =
@@ -373,17 +342,17 @@ pub mod Scene {
     // ========================================================================
 
     /// 全ノードを preorder で走査し、変換関数を順次適用する（Region で状態をスレッドする）
-    def foldNodes(f: (s, EngineNode, NodePath, Scene[s]) -> (s, EngineNode, Scene[s]) \ ef,
+    def foldNodes(f: (EngineNode[s], NodePath, Scene[s]) -> (EngineNode[s], Scene[s]) \ ef,
                   scene: Scene[s]): Scene[s] \ ef =
         let paths = preorderPaths(scene);
         region rc {
             let sceneRef = Ref.fresh(rc, scene);
             List.forEach(path -> {
-                match getAt(path, Ref.get(sceneRef)) {
+                match getEngineNode(path, Ref.get(sceneRef)) {
                     case None => ()
-                    case Some((engineNode, state)) =>
-                        let (newState, newEn, s1) = f(state, engineNode, path, Ref.get(sceneRef));
-                        Ref.put(setAt(path, newEn, newState, s1), sceneRef)
+                    case Some(engineNode) =>
+                        let (newEn, s1) = f(engineNode, path, Ref.get(sceneRef));
+                        Ref.put(setEngineNode(path, newEn, s1), sceneRef)
                 }
             }, paths);
             Ref.get(sceneRef)
@@ -391,7 +360,7 @@ pub mod Scene {
 
     /// 全ノードの ready を preorder（親→子）の順で呼び出し、readied フラグを立てる
     def readyAll(scene: Scene[s]): Scene[s] with Node[s] =
-        foldNodes((state, engineNode, path, sc) -> Node.ready(state, engineNode, path, sc), scene)
+        foldNodes((engineNode, path, sc) -> Node.ready(engineNode, path, sc), scene)
             |> markReady
 
     /// 全ノードの process を preorder（親→子）の順で呼び出す
@@ -400,12 +369,12 @@ pub mod Scene {
     pub def processAll(delta: Float64, paused: Bool, scene: Scene[s]): Scene[s] with Node[s] =
         let scene1 = if (not isReady(scene)) readyAll(scene) else scene;
         let dt = Float64.truncateToFloat32(delta);
-        foldNodes((state, engineNode, path, sc) ->
-            if (ProcessMode.shouldProcess(paused, Node.getProcessMode(state))) {
+        foldNodes((engineNode, path, sc) ->
+            if (ProcessMode.shouldProcess(paused, Node.getProcessMode(EngineNode.getState(engineNode)))) {
                 let newEn = EngineNode.engineProcess(dt, engineNode);
-                Node.process(delta, state, newEn, path, sc)
+                Node.process(delta, newEn, path, sc)
             } else
-                (state, engineNode, sc),
+                (engineNode, sc),
             scene1)
 
     // ========================================================================
@@ -413,7 +382,7 @@ pub mod Scene {
     // ========================================================================
 
     /// EngineNode のプロパティから Drawable を組み立てる（フォールバック用）
-    pub def toDrawable(texture: String, engineNode: EngineNode, globalPos: Vec2.Vec2): Engine.Drawable =
+    pub def toDrawable(texture: String, engineNode: EngineNode[s], globalPos: Vec2.Vec2): Engine.Drawable =
         {
             texture = texture,
             position = globalPos,

@@ -1,31 +1,60 @@
 /// エンジンノード — 全ビルトインノード型を統一的に扱うための sum type
 ///
-/// Scene[s] の各 SceneEntry は EngineNode（描画・物理・衝突）と
-/// ゲーム固有の状態 s を分離して保持する。
+/// Scene[s] の各 SceneEntry は EngineNode[s]（描画・物理・衝突 + ゲーム状態）を保持する。
 /// CanvasItem / Node2D / CollisionObject2D / Renderable は
-/// EngineNode に対して一度だけ実装され、ゲーム側のボイラープレートを排除する。
-pub enum EngineNode {
+/// EngineNode[s] に対して一度だけ実装され、ゲーム側のボイラープレートを排除する。
+pub enum EngineNode[state] {
     /// 静的スプライト（背景・車両スプライト・丸太スプライト用）
-    case Sprite2DNode(Sprite2D)
+    case Sprite2DWithState(Sprite2D, state)
     /// 衝突エリア（Area2D ベースの当たり判定）
-    case Area2DNode(Area2D)
+    case Area2DWithState(Area2D, state)
     /// キャラクターボディ（プレイヤー等の物理ボディ）
-    case Body2DNode(CharacterBody2D)
+    case Body2DWithState(CharacterBody2D, state)
     /// アニメーション付きスプライト
-    case AnimSprite2DNode(AnimatedSprite2D)
+    case AnimSprite2DWithState(AnimatedSprite2D, state)
     /// テキストラベル（HUD 表示）
-    case Label2DNode(Label2D)
+    case Label2DWithState(Label2D, state)
     /// 位置マーカー（スポーン地点・参照点）
-    case Marker2DNode(Marker2D)
+    case Marker2DWithState(Marker2D, state)
 }
 
 mod EngineNode {
 
+    /// EngineNode から state を取得する
+    pub def getState(node: EngineNode[s]): s = match node {
+        case EngineNode.Sprite2DWithState(_, state) => state
+        case EngineNode.Area2DWithState(_, state) => state
+        case EngineNode.Body2DWithState(_, state) => state
+        case EngineNode.AnimSprite2DWithState(_, state) => state
+        case EngineNode.Label2DWithState(_, state) => state
+        case EngineNode.Marker2DWithState(_, state) => state
+    }
+
+    /// EngineNode の state を置き換える
+    pub def setState(newState: s, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.Sprite2DWithState(inner, _) => EngineNode.Sprite2DWithState(inner, newState)
+        case EngineNode.Area2DWithState(inner, _) => EngineNode.Area2DWithState(inner, newState)
+        case EngineNode.Body2DWithState(inner, _) => EngineNode.Body2DWithState(inner, newState)
+        case EngineNode.AnimSprite2DWithState(inner, _) => EngineNode.AnimSprite2DWithState(inner, newState)
+        case EngineNode.Label2DWithState(inner, _) => EngineNode.Label2DWithState(inner, newState)
+        case EngineNode.Marker2DWithState(inner, _) => EngineNode.Marker2DWithState(inner, newState)
+    }
+
+    /// EngineNode の state に関数を適用する
+    pub def mapState(f: s -> s, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.Sprite2DWithState(inner, state) => EngineNode.Sprite2DWithState(inner, f(state))
+        case EngineNode.Area2DWithState(inner, state) => EngineNode.Area2DWithState(inner, f(state))
+        case EngineNode.Body2DWithState(inner, state) => EngineNode.Body2DWithState(inner, f(state))
+        case EngineNode.AnimSprite2DWithState(inner, state) => EngineNode.AnimSprite2DWithState(inner, f(state))
+        case EngineNode.Label2DWithState(inner, state) => EngineNode.Label2DWithState(inner, f(state))
+        case EngineNode.Marker2DWithState(inner, state) => EngineNode.Marker2DWithState(inner, f(state))
+    }
+
     /// エンジンレベルの毎フレーム処理
     /// AnimatedSprite2D のフレーム送りを自動で行う。
-    pub def engineProcess(delta: Float32, node: EngineNode): EngineNode = match node {
-        case EngineNode.AnimSprite2DNode(sprite) =>
-            EngineNode.AnimSprite2DNode(AnimatedSprite2D.advanceFrame(delta, sprite))
+    pub def engineProcess(delta: Float32, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.AnimSprite2DWithState(sprite, state) =>
+            EngineNode.AnimSprite2DWithState(AnimatedSprite2D.advanceFrame(delta, sprite), state)
         case _ => node
     }
 
@@ -63,7 +92,7 @@ mod EngineNode {
         }
 
     /// EngineNode からフォールバック用 Drawable を組み立てる（デバッグ表示用）
-    pub def fallbackDrawable(node: EngineNode, globalPos: Vec2.Vec2): Engine.Drawable =
+    pub def fallbackDrawable(node: EngineNode[s], globalPos: Vec2.Vec2): Engine.Drawable =
         {
             texture = "white",
             position = globalPos,
@@ -79,157 +108,157 @@ mod EngineNode {
 
 // ── CanvasItem 実装 ──
 
-instance CanvasItem[EngineNode] {
-    pub def isVisible(node: EngineNode): Bool = match node {
-        case EngineNode.Sprite2DNode(sprite) => CanvasItem.isVisible(sprite)
-        case EngineNode.Area2DNode(area) => CanvasItem.isVisible(area)
-        case EngineNode.Body2DNode(body) => CanvasItem.isVisible(body)
-        case EngineNode.AnimSprite2DNode(sprite) => CanvasItem.isVisible(sprite)
-        case EngineNode.Label2DNode(label) => CanvasItem.isVisible(label)
-        case EngineNode.Marker2DNode(marker) => CanvasItem.isVisible(marker)
+instance CanvasItem[EngineNode[s]] {
+    pub def isVisible(node: EngineNode[s]): Bool = match node {
+        case EngineNode.Sprite2DWithState(sprite, _) => CanvasItem.isVisible(sprite)
+        case EngineNode.Area2DWithState(area, _) => CanvasItem.isVisible(area)
+        case EngineNode.Body2DWithState(body, _) => CanvasItem.isVisible(body)
+        case EngineNode.AnimSprite2DWithState(sprite, _) => CanvasItem.isVisible(sprite)
+        case EngineNode.Label2DWithState(label, _) => CanvasItem.isVisible(label)
+        case EngineNode.Marker2DWithState(marker, _) => CanvasItem.isVisible(marker)
     }
-    pub def setVisible(visible: Bool, node: EngineNode): EngineNode = match node {
-        case EngineNode.Sprite2DNode(sprite) => EngineNode.Sprite2DNode(CanvasItem.setVisible(visible, sprite))
-        case EngineNode.Area2DNode(area) => EngineNode.Area2DNode(CanvasItem.setVisible(visible, area))
-        case EngineNode.Body2DNode(body) => EngineNode.Body2DNode(CanvasItem.setVisible(visible, body))
-        case EngineNode.AnimSprite2DNode(sprite) => EngineNode.AnimSprite2DNode(CanvasItem.setVisible(visible, sprite))
-        case EngineNode.Label2DNode(label) => EngineNode.Label2DNode(CanvasItem.setVisible(visible, label))
-        case EngineNode.Marker2DNode(marker) => EngineNode.Marker2DNode(CanvasItem.setVisible(visible, marker))
+    pub def setVisible(visible: Bool, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.Sprite2DWithState(sprite, st) => EngineNode.Sprite2DWithState(CanvasItem.setVisible(visible, sprite), st)
+        case EngineNode.Area2DWithState(area, st) => EngineNode.Area2DWithState(CanvasItem.setVisible(visible, area), st)
+        case EngineNode.Body2DWithState(body, st) => EngineNode.Body2DWithState(CanvasItem.setVisible(visible, body), st)
+        case EngineNode.AnimSprite2DWithState(sprite, st) => EngineNode.AnimSprite2DWithState(CanvasItem.setVisible(visible, sprite), st)
+        case EngineNode.Label2DWithState(label, st) => EngineNode.Label2DWithState(CanvasItem.setVisible(visible, label), st)
+        case EngineNode.Marker2DWithState(marker, st) => EngineNode.Marker2DWithState(CanvasItem.setVisible(visible, marker), st)
     }
-    pub def getModulate(node: EngineNode): Color = match node {
-        case EngineNode.Sprite2DNode(sprite) => CanvasItem.getModulate(sprite)
-        case EngineNode.Area2DNode(area) => CanvasItem.getModulate(area)
-        case EngineNode.Body2DNode(body) => CanvasItem.getModulate(body)
-        case EngineNode.AnimSprite2DNode(sprite) => CanvasItem.getModulate(sprite)
-        case EngineNode.Label2DNode(label) => CanvasItem.getModulate(label)
-        case EngineNode.Marker2DNode(marker) => CanvasItem.getModulate(marker)
+    pub def getModulate(node: EngineNode[s]): Color = match node {
+        case EngineNode.Sprite2DWithState(sprite, _) => CanvasItem.getModulate(sprite)
+        case EngineNode.Area2DWithState(area, _) => CanvasItem.getModulate(area)
+        case EngineNode.Body2DWithState(body, _) => CanvasItem.getModulate(body)
+        case EngineNode.AnimSprite2DWithState(sprite, _) => CanvasItem.getModulate(sprite)
+        case EngineNode.Label2DWithState(label, _) => CanvasItem.getModulate(label)
+        case EngineNode.Marker2DWithState(marker, _) => CanvasItem.getModulate(marker)
     }
-    pub def setModulate(color: Color, node: EngineNode): EngineNode = match node {
-        case EngineNode.Sprite2DNode(sprite) => EngineNode.Sprite2DNode(CanvasItem.setModulate(color, sprite))
-        case EngineNode.Area2DNode(area) => EngineNode.Area2DNode(CanvasItem.setModulate(color, area))
-        case EngineNode.Body2DNode(body) => EngineNode.Body2DNode(CanvasItem.setModulate(color, body))
-        case EngineNode.AnimSprite2DNode(sprite) => EngineNode.AnimSprite2DNode(CanvasItem.setModulate(color, sprite))
-        case EngineNode.Label2DNode(label) => EngineNode.Label2DNode(CanvasItem.setModulate(color, label))
-        case EngineNode.Marker2DNode(marker) => EngineNode.Marker2DNode(CanvasItem.setModulate(color, marker))
+    pub def setModulate(color: Color, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.Sprite2DWithState(sprite, st) => EngineNode.Sprite2DWithState(CanvasItem.setModulate(color, sprite), st)
+        case EngineNode.Area2DWithState(area, st) => EngineNode.Area2DWithState(CanvasItem.setModulate(color, area), st)
+        case EngineNode.Body2DWithState(body, st) => EngineNode.Body2DWithState(CanvasItem.setModulate(color, body), st)
+        case EngineNode.AnimSprite2DWithState(sprite, st) => EngineNode.AnimSprite2DWithState(CanvasItem.setModulate(color, sprite), st)
+        case EngineNode.Label2DWithState(label, st) => EngineNode.Label2DWithState(CanvasItem.setModulate(color, label), st)
+        case EngineNode.Marker2DWithState(marker, st) => EngineNode.Marker2DWithState(CanvasItem.setModulate(color, marker), st)
     }
-    pub def getZIndex(node: EngineNode): Int32 = match node {
-        case EngineNode.Sprite2DNode(sprite) => CanvasItem.getZIndex(sprite)
-        case EngineNode.Area2DNode(area) => CanvasItem.getZIndex(area)
-        case EngineNode.Body2DNode(body) => CanvasItem.getZIndex(body)
-        case EngineNode.AnimSprite2DNode(sprite) => CanvasItem.getZIndex(sprite)
-        case EngineNode.Label2DNode(label) => CanvasItem.getZIndex(label)
-        case EngineNode.Marker2DNode(marker) => CanvasItem.getZIndex(marker)
+    pub def getZIndex(node: EngineNode[s]): Int32 = match node {
+        case EngineNode.Sprite2DWithState(sprite, _) => CanvasItem.getZIndex(sprite)
+        case EngineNode.Area2DWithState(area, _) => CanvasItem.getZIndex(area)
+        case EngineNode.Body2DWithState(body, _) => CanvasItem.getZIndex(body)
+        case EngineNode.AnimSprite2DWithState(sprite, _) => CanvasItem.getZIndex(sprite)
+        case EngineNode.Label2DWithState(label, _) => CanvasItem.getZIndex(label)
+        case EngineNode.Marker2DWithState(marker, _) => CanvasItem.getZIndex(marker)
     }
-    pub def setZIndex(zIndex: Int32, node: EngineNode): EngineNode = match node {
-        case EngineNode.Sprite2DNode(sprite) => EngineNode.Sprite2DNode(CanvasItem.setZIndex(zIndex, sprite))
-        case EngineNode.Area2DNode(area) => EngineNode.Area2DNode(CanvasItem.setZIndex(zIndex, area))
-        case EngineNode.Body2DNode(body) => EngineNode.Body2DNode(CanvasItem.setZIndex(zIndex, body))
-        case EngineNode.AnimSprite2DNode(sprite) => EngineNode.AnimSprite2DNode(CanvasItem.setZIndex(zIndex, sprite))
-        case EngineNode.Label2DNode(label) => EngineNode.Label2DNode(CanvasItem.setZIndex(zIndex, label))
-        case EngineNode.Marker2DNode(marker) => EngineNode.Marker2DNode(CanvasItem.setZIndex(zIndex, marker))
+    pub def setZIndex(zIndex: Int32, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.Sprite2DWithState(sprite, st) => EngineNode.Sprite2DWithState(CanvasItem.setZIndex(zIndex, sprite), st)
+        case EngineNode.Area2DWithState(area, st) => EngineNode.Area2DWithState(CanvasItem.setZIndex(zIndex, area), st)
+        case EngineNode.Body2DWithState(body, st) => EngineNode.Body2DWithState(CanvasItem.setZIndex(zIndex, body), st)
+        case EngineNode.AnimSprite2DWithState(sprite, st) => EngineNode.AnimSprite2DWithState(CanvasItem.setZIndex(zIndex, sprite), st)
+        case EngineNode.Label2DWithState(label, st) => EngineNode.Label2DWithState(CanvasItem.setZIndex(zIndex, label), st)
+        case EngineNode.Marker2DWithState(marker, st) => EngineNode.Marker2DWithState(CanvasItem.setZIndex(zIndex, marker), st)
     }
 }
 
 // ── Node2D 実装 ──
 
-instance Node2D[EngineNode] {
-    pub def getPosition(node: EngineNode): Vec2.Vec2 = match node {
-        case EngineNode.Sprite2DNode(sprite) => Node2D.getPosition(sprite)
-        case EngineNode.Area2DNode(area) => Node2D.getPosition(area)
-        case EngineNode.Body2DNode(body) => Node2D.getPosition(body)
-        case EngineNode.AnimSprite2DNode(sprite) => Node2D.getPosition(sprite)
-        case EngineNode.Label2DNode(label) => Node2D.getPosition(label)
-        case EngineNode.Marker2DNode(marker) => Node2D.getPosition(marker)
+instance Node2D[EngineNode[s]] {
+    pub def getPosition(node: EngineNode[s]): Vec2.Vec2 = match node {
+        case EngineNode.Sprite2DWithState(sprite, _) => Node2D.getPosition(sprite)
+        case EngineNode.Area2DWithState(area, _) => Node2D.getPosition(area)
+        case EngineNode.Body2DWithState(body, _) => Node2D.getPosition(body)
+        case EngineNode.AnimSprite2DWithState(sprite, _) => Node2D.getPosition(sprite)
+        case EngineNode.Label2DWithState(label, _) => Node2D.getPosition(label)
+        case EngineNode.Marker2DWithState(marker, _) => Node2D.getPosition(marker)
     }
-    pub def setPosition(position: Vec2.Vec2, node: EngineNode): EngineNode = match node {
-        case EngineNode.Sprite2DNode(sprite) => EngineNode.Sprite2DNode(Node2D.setPosition(position, sprite))
-        case EngineNode.Area2DNode(area) => EngineNode.Area2DNode(Node2D.setPosition(position, area))
-        case EngineNode.Body2DNode(body) => EngineNode.Body2DNode(Node2D.setPosition(position, body))
-        case EngineNode.AnimSprite2DNode(sprite) => EngineNode.AnimSprite2DNode(Node2D.setPosition(position, sprite))
-        case EngineNode.Label2DNode(label) => EngineNode.Label2DNode(Node2D.setPosition(position, label))
-        case EngineNode.Marker2DNode(marker) => EngineNode.Marker2DNode(Node2D.setPosition(position, marker))
+    pub def setPosition(position: Vec2.Vec2, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.Sprite2DWithState(sprite, st) => EngineNode.Sprite2DWithState(Node2D.setPosition(position, sprite), st)
+        case EngineNode.Area2DWithState(area, st) => EngineNode.Area2DWithState(Node2D.setPosition(position, area), st)
+        case EngineNode.Body2DWithState(body, st) => EngineNode.Body2DWithState(Node2D.setPosition(position, body), st)
+        case EngineNode.AnimSprite2DWithState(sprite, st) => EngineNode.AnimSprite2DWithState(Node2D.setPosition(position, sprite), st)
+        case EngineNode.Label2DWithState(label, st) => EngineNode.Label2DWithState(Node2D.setPosition(position, label), st)
+        case EngineNode.Marker2DWithState(marker, st) => EngineNode.Marker2DWithState(Node2D.setPosition(position, marker), st)
     }
-    pub def getRotation(node: EngineNode): Float64 = match node {
-        case EngineNode.Sprite2DNode(sprite) => Node2D.getRotation(sprite)
-        case EngineNode.Area2DNode(area) => Node2D.getRotation(area)
-        case EngineNode.Body2DNode(body) => Node2D.getRotation(body)
-        case EngineNode.AnimSprite2DNode(sprite) => Node2D.getRotation(sprite)
-        case EngineNode.Label2DNode(label) => Node2D.getRotation(label)
-        case EngineNode.Marker2DNode(marker) => Node2D.getRotation(marker)
+    pub def getRotation(node: EngineNode[s]): Float64 = match node {
+        case EngineNode.Sprite2DWithState(sprite, _) => Node2D.getRotation(sprite)
+        case EngineNode.Area2DWithState(area, _) => Node2D.getRotation(area)
+        case EngineNode.Body2DWithState(body, _) => Node2D.getRotation(body)
+        case EngineNode.AnimSprite2DWithState(sprite, _) => Node2D.getRotation(sprite)
+        case EngineNode.Label2DWithState(label, _) => Node2D.getRotation(label)
+        case EngineNode.Marker2DWithState(marker, _) => Node2D.getRotation(marker)
     }
-    pub def setRotation(rotation: Float64, node: EngineNode): EngineNode = match node {
-        case EngineNode.Sprite2DNode(sprite) => EngineNode.Sprite2DNode(Node2D.setRotation(rotation, sprite))
-        case EngineNode.Area2DNode(area) => EngineNode.Area2DNode(Node2D.setRotation(rotation, area))
-        case EngineNode.Body2DNode(body) => EngineNode.Body2DNode(Node2D.setRotation(rotation, body))
-        case EngineNode.AnimSprite2DNode(sprite) => EngineNode.AnimSprite2DNode(Node2D.setRotation(rotation, sprite))
-        case EngineNode.Label2DNode(label) => EngineNode.Label2DNode(Node2D.setRotation(rotation, label))
-        case EngineNode.Marker2DNode(marker) => EngineNode.Marker2DNode(Node2D.setRotation(rotation, marker))
+    pub def setRotation(rotation: Float64, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.Sprite2DWithState(sprite, st) => EngineNode.Sprite2DWithState(Node2D.setRotation(rotation, sprite), st)
+        case EngineNode.Area2DWithState(area, st) => EngineNode.Area2DWithState(Node2D.setRotation(rotation, area), st)
+        case EngineNode.Body2DWithState(body, st) => EngineNode.Body2DWithState(Node2D.setRotation(rotation, body), st)
+        case EngineNode.AnimSprite2DWithState(sprite, st) => EngineNode.AnimSprite2DWithState(Node2D.setRotation(rotation, sprite), st)
+        case EngineNode.Label2DWithState(label, st) => EngineNode.Label2DWithState(Node2D.setRotation(rotation, label), st)
+        case EngineNode.Marker2DWithState(marker, st) => EngineNode.Marker2DWithState(Node2D.setRotation(rotation, marker), st)
     }
-    pub def getScale(node: EngineNode): Vec2.Vec2 = match node {
-        case EngineNode.Sprite2DNode(sprite) => Node2D.getScale(sprite)
-        case EngineNode.Area2DNode(area) => Node2D.getScale(area)
-        case EngineNode.Body2DNode(body) => Node2D.getScale(body)
-        case EngineNode.AnimSprite2DNode(sprite) => Node2D.getScale(sprite)
-        case EngineNode.Label2DNode(label) => Node2D.getScale(label)
-        case EngineNode.Marker2DNode(marker) => Node2D.getScale(marker)
+    pub def getScale(node: EngineNode[s]): Vec2.Vec2 = match node {
+        case EngineNode.Sprite2DWithState(sprite, _) => Node2D.getScale(sprite)
+        case EngineNode.Area2DWithState(area, _) => Node2D.getScale(area)
+        case EngineNode.Body2DWithState(body, _) => Node2D.getScale(body)
+        case EngineNode.AnimSprite2DWithState(sprite, _) => Node2D.getScale(sprite)
+        case EngineNode.Label2DWithState(label, _) => Node2D.getScale(label)
+        case EngineNode.Marker2DWithState(marker, _) => Node2D.getScale(marker)
     }
-    pub def setScale(scale: Vec2.Vec2, node: EngineNode): EngineNode = match node {
-        case EngineNode.Sprite2DNode(sprite) => EngineNode.Sprite2DNode(Node2D.setScale(scale, sprite))
-        case EngineNode.Area2DNode(area) => EngineNode.Area2DNode(Node2D.setScale(scale, area))
-        case EngineNode.Body2DNode(body) => EngineNode.Body2DNode(Node2D.setScale(scale, body))
-        case EngineNode.AnimSprite2DNode(sprite) => EngineNode.AnimSprite2DNode(Node2D.setScale(scale, sprite))
-        case EngineNode.Label2DNode(label) => EngineNode.Label2DNode(Node2D.setScale(scale, label))
-        case EngineNode.Marker2DNode(marker) => EngineNode.Marker2DNode(Node2D.setScale(scale, marker))
+    pub def setScale(scale: Vec2.Vec2, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.Sprite2DWithState(sprite, st) => EngineNode.Sprite2DWithState(Node2D.setScale(scale, sprite), st)
+        case EngineNode.Area2DWithState(area, st) => EngineNode.Area2DWithState(Node2D.setScale(scale, area), st)
+        case EngineNode.Body2DWithState(body, st) => EngineNode.Body2DWithState(Node2D.setScale(scale, body), st)
+        case EngineNode.AnimSprite2DWithState(sprite, st) => EngineNode.AnimSprite2DWithState(Node2D.setScale(scale, sprite), st)
+        case EngineNode.Label2DWithState(label, st) => EngineNode.Label2DWithState(Node2D.setScale(scale, label), st)
+        case EngineNode.Marker2DWithState(marker, st) => EngineNode.Marker2DWithState(Node2D.setScale(scale, marker), st)
     }
-    pub def getSkew(node: EngineNode): Float64 = match node {
-        case EngineNode.Sprite2DNode(sprite) => Node2D.getSkew(sprite)
-        case EngineNode.Area2DNode(area) => Node2D.getSkew(area)
-        case EngineNode.Body2DNode(body) => Node2D.getSkew(body)
-        case EngineNode.AnimSprite2DNode(sprite) => Node2D.getSkew(sprite)
-        case EngineNode.Label2DNode(label) => Node2D.getSkew(label)
-        case EngineNode.Marker2DNode(marker) => Node2D.getSkew(marker)
+    pub def getSkew(node: EngineNode[s]): Float64 = match node {
+        case EngineNode.Sprite2DWithState(sprite, _) => Node2D.getSkew(sprite)
+        case EngineNode.Area2DWithState(area, _) => Node2D.getSkew(area)
+        case EngineNode.Body2DWithState(body, _) => Node2D.getSkew(body)
+        case EngineNode.AnimSprite2DWithState(sprite, _) => Node2D.getSkew(sprite)
+        case EngineNode.Label2DWithState(label, _) => Node2D.getSkew(label)
+        case EngineNode.Marker2DWithState(marker, _) => Node2D.getSkew(marker)
     }
-    pub def setSkew(skew: Float64, node: EngineNode): EngineNode = match node {
-        case EngineNode.Sprite2DNode(sprite) => EngineNode.Sprite2DNode(Node2D.setSkew(skew, sprite))
-        case EngineNode.Area2DNode(area) => EngineNode.Area2DNode(Node2D.setSkew(skew, area))
-        case EngineNode.Body2DNode(body) => EngineNode.Body2DNode(Node2D.setSkew(skew, body))
-        case EngineNode.AnimSprite2DNode(sprite) => EngineNode.AnimSprite2DNode(Node2D.setSkew(skew, sprite))
-        case EngineNode.Label2DNode(label) => EngineNode.Label2DNode(Node2D.setSkew(skew, label))
-        case EngineNode.Marker2DNode(marker) => EngineNode.Marker2DNode(Node2D.setSkew(skew, marker))
+    pub def setSkew(skew: Float64, node: EngineNode[s]): EngineNode[s] = match node {
+        case EngineNode.Sprite2DWithState(sprite, st) => EngineNode.Sprite2DWithState(Node2D.setSkew(skew, sprite), st)
+        case EngineNode.Area2DWithState(area, st) => EngineNode.Area2DWithState(Node2D.setSkew(skew, area), st)
+        case EngineNode.Body2DWithState(body, st) => EngineNode.Body2DWithState(Node2D.setSkew(skew, body), st)
+        case EngineNode.AnimSprite2DWithState(sprite, st) => EngineNode.AnimSprite2DWithState(Node2D.setSkew(skew, sprite), st)
+        case EngineNode.Label2DWithState(label, st) => EngineNode.Label2DWithState(Node2D.setSkew(skew, label), st)
+        case EngineNode.Marker2DWithState(marker, st) => EngineNode.Marker2DWithState(Node2D.setSkew(skew, marker), st)
     }
 }
 
 // ── CollisionObject2D 実装 ──
 
-instance CollisionObject2D[EngineNode] {
-    pub def getCollisionShape(node: EngineNode): Option[CollisionShape2D] = match node {
-        case EngineNode.Area2DNode(area) => CollisionObject2D.getCollisionShape(area)
+instance CollisionObject2D[EngineNode[s]] {
+    pub def getCollisionShape(node: EngineNode[s]): Option[CollisionShape2D] = match node {
+        case EngineNode.Area2DWithState(area, _) => CollisionObject2D.getCollisionShape(area)
         case _ => None
     }
-    pub def isMonitoring(node: EngineNode): Bool = match node {
-        case EngineNode.Area2DNode(area) => CollisionObject2D.isMonitoring(area)
+    pub def isMonitoring(node: EngineNode[s]): Bool = match node {
+        case EngineNode.Area2DWithState(area, _) => CollisionObject2D.isMonitoring(area)
         case _ => false
     }
-    pub def isMonitorable(node: EngineNode): Bool = match node {
-        case EngineNode.Area2DNode(area) => CollisionObject2D.isMonitorable(area)
+    pub def isMonitorable(node: EngineNode[s]): Bool = match node {
+        case EngineNode.Area2DWithState(area, _) => CollisionObject2D.isMonitorable(area)
         case _ => false
     }
-    redef getCollisionPriority(node: EngineNode): Int32 = match node {
-        case EngineNode.Area2DNode(area) => CollisionObject2D.getCollisionPriority(area)
+    redef getCollisionPriority(node: EngineNode[s]): Int32 = match node {
+        case EngineNode.Area2DWithState(area, _) => CollisionObject2D.getCollisionPriority(area)
         case _ => 0
     }
 }
 
 // ── Renderable 実装 ──
 
-instance Engine.Renderable[EngineNode] {
-    pub def toDrawables(node: EngineNode, globalPos: Vec2.Vec2): List[Engine.Drawable] =
+instance Engine.Renderable[EngineNode[s]] {
+    pub def toDrawables(node: EngineNode[s], globalPos: Vec2.Vec2): List[Engine.Drawable] =
         match node {
-            case EngineNode.Sprite2DNode(sprite) =>
+            case EngineNode.Sprite2DWithState(sprite, _) =>
                 EngineNode.spriteToDrawable(sprite, globalPos) :: Nil
-            case EngineNode.AnimSprite2DNode(sprite) =>
+            case EngineNode.AnimSprite2DWithState(sprite, _) =>
                 EngineNode.animSpriteToDrawable(sprite, globalPos) :: Nil
-            case EngineNode.Label2DNode(label) =>
+            case EngineNode.Label2DWithState(label, _) =>
                 Label2D.toDrawables(label, globalPos)
             case _ =>
                 EngineNode.fallbackDrawable(node, globalPos) :: Nil

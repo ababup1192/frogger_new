@@ -16,8 +16,7 @@ pub type alias GameState = {
 }
 
 /// ゲーム固有の状態データ
-/// エンジンノード (EngineNode) は SceneEntry 内に別途保持されるため、
-/// ここにはゲームロジックに必要なデータのみを定義する。
+/// EngineNode[GameData] がエンジンノードとゲーム状態を一体で保持する。
 pub enum GameData {
     /// プレイヤー（前フレームのキー状態 + 移動先ターゲット）
     case PlayerData({prevKeys = Set[Engine.Key], target = Vec2.Vec2})
@@ -36,33 +35,24 @@ pub enum GameData {
 // ── Node 実装 ──
 
 instance Node[GameData] {
-    redef process(delta: Float64, state: GameData, engineNode: EngineNode,
-                    _path: NodePath, scene: Scene[GameData]): (GameData, EngineNode, Scene[GameData]) =
+    redef process(delta: Float64, node: EngineNode[GameData],
+                    _path: NodePath, scene: Scene[GameData]): (EngineNode[GameData], Scene[GameData]) =
         let dt = Float64.truncateToFloat32(delta);
-        match state {
-            // Player: moveToward 物理のみ（入力は handlePlayerInput で処理）
-            case GameData.PlayerData(r) =>
-                match engineNode {
-                    case EngineNode.Body2DNode(body) =>
-                        let currentPos = Node2D.getPosition(body);
-                        let speed = CharacterBody2D.getMoveSpeed(body);
-                        let newPos = Vec2.moveToward(currentPos, r#target, speed * dt);
-                        let newBody = Node2D.setPosition(newPos, body);
-                        (state, EngineNode.Body2DNode(newBody), scene)
-                    case _ => (state, engineNode, scene)
-                }
-            // Vehicle: 水平方向に移動し、画面外でラップ
-            case GameData.VehicleData(r) =>
-                let pos = Node2D.getPosition(engineNode);
+        match node {
+            case EngineNode.Body2DWithState(body, GameData.PlayerData(r)) =>
+                let currentPos = Node2D.getPosition(body);
+                let speed = CharacterBody2D.getMoveSpeed(body);
+                let newPos = Vec2.moveToward(currentPos, r#target, speed * dt);
+                (EngineNode.Body2DWithState(Node2D.setPosition(newPos, body), GameData.PlayerData(r)), scene)
+            case EngineNode.Area2DWithState(_, GameData.VehicleData(r)) =>
+                let pos = Node2D.getPosition(node);
                 let wrappedX = Game.wrapX(r#vx, pos#x + r#vx * dt);
-                (state, Node2D.setPosition({x = wrappedX, y = pos#y}, engineNode), scene)
-            // Platform (丸太・亀): Vehicle と同じ移動＋ラップ
-            case GameData.PlatformData(r) =>
-                let pos = Node2D.getPosition(engineNode);
+                (Node2D.setPosition({x = wrappedX, y = pos#y}, node), scene)
+            case EngineNode.Area2DWithState(_, GameData.PlatformData(r)) =>
+                let pos = Node2D.getPosition(node);
                 let wrappedX = Game.wrapX(r#vx, pos#x + r#vx * dt);
-                (state, Node2D.setPosition({x = wrappedX, y = pos#y}, engineNode), scene)
-            // AnimSprite2D のフレーム送りはエンジン側で自動処理されるため不要
-            case _ => (state, engineNode, scene)
+                (Node2D.setPosition({x = wrappedX, y = pos#y}, node), scene)
+            case _ => (node, scene)
         }
 }
 
@@ -76,8 +66,8 @@ instance AreaHandler[GameData] {
             // プレイヤーの Hitbox が Vehicle と衝突 → スプライトを赤にする
             case (GameData.HitboxData, GameData.VehicleData(_)) =>
                 Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
-                    case EngineNode.AnimSprite2DNode(sprite) =>
-                        EngineNode.AnimSprite2DNode(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite))
+                    case EngineNode.AnimSprite2DWithState(sprite, st) =>
+                        EngineNode.AnimSprite2DWithState(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite), st)
                     case other => other
                 }, scene)
             // プレイヤーの Hitbox が HomeSlot と衝突
@@ -85,8 +75,8 @@ instance AreaHandler[GameData] {
                 // 充填済みスロットに入ったら死亡（スプライトを赤にして checkDeath で処理）
                 if (r#filled)
                     Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
-                        case EngineNode.AnimSprite2DNode(sprite) =>
-                            EngineNode.AnimSprite2DNode(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite))
+                        case EngineNode.AnimSprite2DWithState(sprite, st) =>
+                            EngineNode.AnimSprite2DWithState(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite), st)
                         case other => other
                     }, scene)
                 else
@@ -97,8 +87,8 @@ instance AreaHandler[GameData] {
                             case other2 => other2
                         })
                         |> Scene.mapEngineNode(List.append(otherPath, "sprite" :: Nil), engineNode -> match engineNode {
-                            case EngineNode.Sprite2DNode(sprite) =>
-                                EngineNode.Sprite2DNode(Sprite2D.setTexture("HomeFrog", sprite))
+                            case EngineNode.Sprite2DWithState(sprite, st) =>
+                                EngineNode.Sprite2DWithState(Sprite2D.setTexture("HomeFrog", sprite), st)
                             case other2 => other2
                         })
                         |> Game.resetPlayerPosition
@@ -182,14 +172,14 @@ mod Game {
             |> addAllHomeSlots
             // ── プレイヤー (CharacterBody2D + AnimatedSprite2D + Hitbox) ──
             |> Scene.addNode("player",
-                EngineNode.Body2DNode(
-                    CanvasItem.hide(CharacterBody2D.make(playerStart(), moveSpeed = moveSpeed()))),
-                GameData.PlayerData({
-                    prevKeys = Set.empty(),
-                    target = playerStart()
-                }))
+                EngineNode.Body2DWithState(
+                    CanvasItem.hide(CharacterBody2D.make(playerStart(), moveSpeed = moveSpeed())),
+                    GameData.PlayerData({
+                        prevKeys = Set.empty(),
+                        target = playerStart()
+                    })))
             |> Scene.addChild("player", "Sprite",
-                EngineNode.AnimSprite2DNode(
+                EngineNode.AnimSprite2DWithState(
                     AnimatedSprite2D.make(
                         Map#{
                             "idle" => ("FroggerIdle" :: "FroggerLeap" :: Nil),
@@ -198,14 +188,14 @@ mod Game {
                         initialAnimation = "idle",
                         fps = 4.0f32,
                         {x = 0.0f32, y = 0.0f32},
-                        {x = 4.0f32, y = 4.0f32})),
-                GameData.StaticData)
+                        {x = 4.0f32, y = 4.0f32}),
+                    GameData.StaticData))
             |> Scene.addChildAt("player" :: Nil, "Hitbox",
-                EngineNode.Area2DNode(
+                EngineNode.Area2DWithState(
                     CanvasItem.hide(
                         Area2D.make({x = 16.0f32, y = 20.0f32},
-                            CollisionShape2D.RectShape2D({width = 32.0f32, height = 24.0f32})))),
-                GameData.HitboxData)
+                            CollisionShape2D.RectShape2D({width = 32.0f32, height = 24.0f32}))),
+                    GameData.HitboxData))
             // ── 車両 ──
             |> addAllVehicles
             // ── 丸太 ──
@@ -214,17 +204,17 @@ mod Game {
             |> addAllTurtles
             // ── HUD Label ──
             |> Scene.addNode("timerLabel",
-                EngineNode.Label2DNode(
+                EngineNode.Label2DWithState(
                     Label2D.make("TIME: 30", fontAtlas, 24.0f32)
                         |> Node2D.setPosition({x = 10.0f32, y = 900.0f32})
-                        |> CanvasItem.setZIndex(10)),
-                GameData.StaticData)
+                        |> CanvasItem.setZIndex(10),
+                    GameData.StaticData))
             |> Scene.addNode("livesLabel",
-                EngineNode.Label2DNode(
+                EngineNode.Label2DWithState(
                     Label2D.make("LIVES: 3", fontAtlas, 24.0f32)
                         |> Node2D.setPosition({x = 10.0f32, y = 940.0f32})
-                        |> CanvasItem.setZIndex(10)),
-                GameData.StaticData);
+                        |> CanvasItem.setZIndex(10),
+                    GameData.StaticData));
         {
             scene = scene,
             gameTimer = Timer.make(30.0f32) |> Timer.setAutostart(true) |> Timer.ready,
@@ -243,7 +233,7 @@ mod Game {
                     zIndex: Int32, scene: Scene[GameData]): Scene[GameData] =
         let texSize = 16.0f32;
         Scene.addNode(name,
-            EngineNode.Sprite2DNode(Sprite2D.Sprite2D({
+            EngineNode.Sprite2DWithState(Sprite2D.Sprite2D({
                 position = position,
                 rotation = 0.0,
                 scale = {x = width / texSize, y = height / texSize},
@@ -256,8 +246,7 @@ mod Game {
                 offset = {x = 0.0f32, y = 0.0f32},
                 flipH = false,
                 flipV = false
-            })),
-            GameData.StaticData,
+            }), GameData.StaticData),
             scene)
 
     /// 単色の矩形背景をシーンに追加する
@@ -265,7 +254,7 @@ mod Game {
                     width: Float32, height: Float32,
                     zIndex: Int32, scene: Scene[GameData]): Scene[GameData] =
         Scene.addNode(name,
-            EngineNode.Sprite2DNode(Sprite2D.Sprite2D({
+            EngineNode.Sprite2DWithState(Sprite2D.Sprite2D({
                 position = position,
                 rotation = 0.0,
                 scale = {x = width, y = height},
@@ -278,8 +267,7 @@ mod Game {
                 offset = {x = 0.0f32, y = 0.0f32},
                 flipH = false,
                 flipV = false
-            })),
-            GameData.StaticData,
+            }), GameData.StaticData),
             scene)
 
     // ========================================================================
@@ -329,13 +317,12 @@ mod Game {
                 |> Area2D.setMonitorable(true);
             acc
                 |> Scene.addNode(name,
-                    EngineNode.Area2DNode(area),
-                    GameData.VehicleData({vx = config#vx}))
+                    EngineNode.Area2DWithState(area, GameData.VehicleData({vx = config#vx})))
                 |> Scene.addChild(name, "sprite",
-                    EngineNode.Sprite2DNode(
+                    EngineNode.Sprite2DWithState(
                         Sprite2D.make(config#texture, {x = 0.0f32, y = 0.0f32},
-                            {x = 4.0f32, y = 4.0f32})),
-                    GameData.StaticData)
+                            {x = 4.0f32, y = 4.0f32}),
+                        GameData.StaticData))
         }, scene)
 
     /// 全車両レーンをシーンに追加する
@@ -385,10 +372,10 @@ mod Game {
                 else "LogMiddle";
             let offsetX = -1.0f32 * totalWidth / 2.0f32 + 32.0f32 + Int32.toFloat32(pieceIdx) * tileSize();
             Scene.addChild(logName, "s${pieceIdx}",
-                EngineNode.Sprite2DNode(
+                EngineNode.Sprite2DWithState(
                     Sprite2D.make(texture, {x = offsetX, y = 0.0f32},
-                        {x = 4.0f32, y = 4.0f32})),
-                GameData.StaticData,
+                        {x = 4.0f32, y = 4.0f32}),
+                    GameData.StaticData),
                 acc)
         }, scene)
 
@@ -406,8 +393,7 @@ mod Game {
                 |> Area2D.setMonitorable(false);
             acc
                 |> Scene.addNode(name,
-                    EngineNode.Area2DNode(area),
-                    GameData.PlatformData({vx = config#vx, platformWidth = platformWidth}))
+                    EngineNode.Area2DWithState(area, GameData.PlatformData({vx = config#vx, platformWidth = platformWidth})))
                 |> addLogSprites(name, config#middles)
         }, scene)
 
@@ -446,10 +432,10 @@ mod Game {
         List.range(0, sections) |> List.foldLeft((acc, sectionIdx) -> {
             let offsetX = -1.0f32 * totalWidth / 2.0f32 + 32.0f32 + Int32.toFloat32(sectionIdx) * tileSize();
             Scene.addChild(turtleName, "s${sectionIdx}",
-                EngineNode.Sprite2DNode(
+                EngineNode.Sprite2DWithState(
                     Sprite2D.make("Turtle_01", {x = offsetX, y = 0.0f32},
-                        {x = 4.0f32, y = 4.0f32})),
-                GameData.StaticData,
+                        {x = 4.0f32, y = 4.0f32}),
+                    GameData.StaticData),
                 acc)
         }, scene)
 
@@ -466,8 +452,7 @@ mod Game {
                 |> Area2D.setMonitorable(false);
             acc
                 |> Scene.addNode(name,
-                    EngineNode.Area2DNode(area),
-                    GameData.PlatformData({vx = config#vx, platformWidth = platformWidth}))
+                    EngineNode.Area2DWithState(area, GameData.PlatformData({vx = config#vx, platformWidth = platformWidth})))
                 |> addTurtleSprites(name, config#sections)
         }, scene)
 
@@ -499,13 +484,12 @@ mod Game {
                     |> Area2D.setMonitorable(true);
                 acc
                     |> Scene.addNode(name,
-                        EngineNode.Area2DNode(area),
-                        GameData.HomeSlotData({filled = false}))
+                        EngineNode.Area2DWithState(area, GameData.HomeSlotData({filled = false})))
                     |> Scene.addChild(name, "sprite",
-                        EngineNode.Sprite2DNode(
+                        EngineNode.Sprite2DWithState(
                             Sprite2D.make("Home", {x = 0.0f32, y = 0.0f32},
-                                {x = 4.0f32, y = 4.0f32})),
-                        GameData.StaticData)
+                                {x = 4.0f32, y = 4.0f32}),
+                            GameData.StaticData))
             }, scene)
 
     // ========================================================================
@@ -612,8 +596,8 @@ mod Game {
                                     case other => other
                                 })
                                 |> Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
-                                    case EngineNode.AnimSprite2DNode(sprite) =>
-                                        EngineNode.AnimSprite2DNode(Node2D.setRotation(directionToRotation(dir), sprite))
+                                    case EngineNode.AnimSprite2DWithState(sprite, st) =>
+                                        EngineNode.AnimSprite2DWithState(Node2D.setRotation(directionToRotation(dir), sprite), st)
                                     case other => other
                                 })
                               | state }
@@ -658,8 +642,8 @@ mod Game {
                 let shift: Vec2.Vec2 = {x = platformVx * dt, y = 0.0f32};
                 { scene = state#scene
                     |> Scene.mapEngineNode("player" :: Nil, engineNode -> match engineNode {
-                        case EngineNode.Body2DNode(body) =>
-                            EngineNode.Body2DNode(Node2D.setPosition(Vec2.add(Node2D.getPosition(body), shift), body))
+                        case EngineNode.Body2DWithState(body, st) =>
+                            EngineNode.Body2DWithState(Node2D.setPosition(Vec2.add(Node2D.getPosition(body), shift), body), st)
                         case other => other
                     })
                     |> Scene.mapState("player" :: Nil, st -> match st {
@@ -682,17 +666,18 @@ mod Game {
 
     pub def playDeathAnim(color: Color, scene: Scene[GameData]): Scene[GameData] =
         Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
-            case EngineNode.AnimSprite2DNode(sprite) =>
-                EngineNode.AnimSprite2DNode(
+            case EngineNode.AnimSprite2DWithState(sprite, st) =>
+                EngineNode.AnimSprite2DWithState(
                     sprite
                         |> AnimatedSprite2D.play("dead")
-                        |> CanvasItem.setModulate(color))
+                        |> CanvasItem.setModulate(color),
+                    st)
             case other => other
         }, scene)
 
     pub def checkDeath(state: GameState): GameState =
         match Scene.getEngineNode("player" :: "Sprite" :: Nil, state#scene) {
-            case Some(EngineNode.AnimSprite2DNode(sprite)) =>
+            case Some(EngineNode.AnimSprite2DWithState(sprite, _)) =>
                 let color = CanvasItem.getModulate(sprite);
                 if (color#g < 0.5f32 and state#phase == GamePhase.Playing)
                     triggerDeath({r = 1.0f32, g = 0.2f32, b = 0.2f32}, state)
@@ -726,8 +711,8 @@ mod Game {
     pub def resetPlayerPosition(scene: Scene[GameData]): Scene[GameData] =
         scene
             |> Scene.mapEngineNode("player" :: Nil, engineNode -> match engineNode {
-                case EngineNode.Body2DNode(body) =>
-                    EngineNode.Body2DNode(Node2D.setPosition(playerStart(), body))
+                case EngineNode.Body2DWithState(body, st) =>
+                    EngineNode.Body2DWithState(Node2D.setPosition(playerStart(), body), st)
                 case other => other
             })
             |> Scene.mapState("player" :: Nil, st -> match st {
@@ -755,12 +740,13 @@ mod Game {
             let newLives = state1#lives - 1;
             let newScene = resetPlayerPosition(state1#scene)
                 |> Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
-                    case EngineNode.AnimSprite2DNode(sprite) =>
-                        EngineNode.AnimSprite2DNode(
+                    case EngineNode.AnimSprite2DWithState(sprite, st) =>
+                        EngineNode.AnimSprite2DWithState(
                             sprite
                                 |> AnimatedSprite2D.play("idle")
                                 |> CanvasItem.setModulate({r = 1.0f32, g = 1.0f32, b = 1.0f32})
-                                |> Node2D.setRotation(0.0))
+                                |> Node2D.setRotation(0.0),
+                            st)
                     case other => other
                 });
             let newPhase = if (newLives <= 0) GamePhase.GameOver else GamePhase.Playing;
@@ -782,13 +768,13 @@ mod Game {
             Float32.toFloat64(Float32.max(0.0f32, Timer.getTimeLeft(state#gameTimer))));
         { scene = state#scene
             |> Scene.mapEngineNode("timerLabel" :: Nil, engineNode -> match engineNode {
-                case EngineNode.Label2DNode(label) =>
-                    EngineNode.Label2DNode(Label2D.setText("TIME: ${timeInt}", label))
+                case EngineNode.Label2DWithState(label, st) =>
+                    EngineNode.Label2DWithState(Label2D.setText("TIME: ${timeInt}", label), st)
                 case other => other
             })
             |> Scene.mapEngineNode("livesLabel" :: Nil, engineNode -> match engineNode {
-                case EngineNode.Label2DNode(label) =>
-                    EngineNode.Label2DNode(Label2D.setText("LIVES: ${state#lives}", label))
+                case EngineNode.Label2DWithState(label, st) =>
+                    EngineNode.Label2DWithState(Label2D.setText("LIVES: ${state#lives}", label), st)
                 case other => other
             })
           | state }

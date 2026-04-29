@@ -74,7 +74,7 @@ def testPlayerChildrenCount(): Unit \ Assert =
 @Test
 def testPlayerSpriteAnimation(): Unit \ Assert =
     match Scene.getEngineNode("player" :: "Sprite" :: Nil, testScene()) {
-        case Some(EngineNode.AnimSprite2DNode(sprite)) =>
+        case Some(EngineNode.AnimSprite2DWithState(sprite, _)) =>
             Assert.assertEq(
                 expected = ("idle", "FroggerIdle"),
                 (AnimatedSprite2D.getCurrentAnimation(sprite),
@@ -197,7 +197,7 @@ def testAnimSpriteAdvancesFrame(): Unit \ Assert =
     let scene = testScene();
     let processed = Scene.processAll(0.3, false, scene);
     match Scene.getEngineNode("player" :: "Sprite" :: Nil, processed) {
-        case Some(EngineNode.AnimSprite2DNode(sprite)) =>
+        case Some(EngineNode.AnimSprite2DWithState(sprite, _)) =>
             Assert.assertEq(expected = "FroggerLeap", AnimatedSprite2D.currentTexture(sprite))
         case _ => bug!("player Sprite not found after process")
     }
@@ -371,8 +371,8 @@ def testDirectionToRotationDown(): Unit \ Assert =
 def testCheckDeathDetectsRed(): Unit \ Assert =
     let state = testState();
     let redScene = Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
-        case EngineNode.AnimSprite2DNode(sprite) =>
-            EngineNode.AnimSprite2DNode(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite))
+        case EngineNode.AnimSprite2DWithState(sprite, st) =>
+            EngineNode.AnimSprite2DWithState(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite), st)
         case other => other
     }, state#scene);
     let deadState = Game.checkDeath({ scene = redScene | state });
@@ -396,8 +396,8 @@ def testCheckDrownInWater(): Unit \ Assert =
     let waterPos: Vec2.Vec2 = {x = 384.0f32, y = 430.0f32};
     let newScene = Scene.setGlobalPosition("player", waterPos, state#scene)
         |> Scene.mapEngineNode("player" :: Nil, engineNode -> match engineNode {
-            case EngineNode.Body2DNode(body) =>
-                EngineNode.Body2DNode(Node2D.setPosition(waterPos, body))
+            case EngineNode.Body2DWithState(body, st) =>
+                EngineNode.Body2DWithState(Node2D.setPosition(waterPos, body), st)
             case other => other
         })
         |> Scene.mapState("player" :: Nil, st -> match st {
@@ -482,7 +482,7 @@ def testAreaHandlerFillChangesTexture(): Unit \ Assert =
         case (Some(hitboxState), Some(slotState)) =>
             let newScene = AreaHandler.onAreaEntered(hitboxPath, hitboxState, slotPath, slotState, scene);
             match Scene.getEngineNode("home2" :: "sprite" :: Nil, newScene) {
-                case Some(EngineNode.Sprite2DNode(sprite)) =>
+                case Some(EngineNode.Sprite2DWithState(sprite, _)) =>
                     let Sprite2D.Sprite2D(r) = sprite;
                     Assert.assertEq(expected = "HomeFrog", r#texture)
                 case _ => bug!("home2 sprite not found")
@@ -514,8 +514,8 @@ def testAreaHandlerSkipsFilledSlot(): Unit \ Assert =
             case other => other
         })
         |> Scene.mapEngineNode("player" :: Nil, engineNode -> match engineNode {
-            case EngineNode.Body2DNode(body) =>
-                EngineNode.Body2DNode(Node2D.setPosition(movedPos, body))
+            case EngineNode.Body2DWithState(body, st) =>
+                EngineNode.Body2DWithState(Node2D.setPosition(movedPos, body), st)
             case other => other
         });
     let hitboxPath = "player" :: "Hitbox" :: Nil;
@@ -621,7 +621,7 @@ def testRespawnResetsAnimation(): Unit \ Assert =
     let state2 = Game.processTimers(2.1f32, state1);
     let updated = Game.handleTimerTimeouts(state2);
     match Scene.getEngineNode("player" :: "Sprite" :: Nil, updated#scene) {
-        case Some(EngineNode.AnimSprite2DNode(sprite)) =>
+        case Some(EngineNode.AnimSprite2DWithState(sprite, _)) =>
             Assert.assertEq(expected = "idle", AnimatedSprite2D.getCurrentAnimation(sprite))
         case _ => bug!("player Sprite not found after respawn")
     }
@@ -752,7 +752,7 @@ def testDeathTimerExists(): Unit \ Assert =
 @Test
 def testTimerLabelExists(): Unit \ Assert =
     match Scene.getEngineNode("timerLabel" :: Nil, testScene()) {
-        case Some(EngineNode.Label2DNode(_)) => Assert.assertTrue(true)
+        case Some(EngineNode.Label2DWithState(_, _)) => Assert.assertTrue(true)
         case _ => bug!("timerLabel not found")
     }
 
@@ -760,7 +760,7 @@ def testTimerLabelExists(): Unit \ Assert =
 @Test
 def testLivesLabelExists(): Unit \ Assert =
     match Scene.getEngineNode("livesLabel" :: Nil, testScene()) {
-        case Some(EngineNode.Label2DNode(_)) => Assert.assertTrue(true)
+        case Some(EngineNode.Label2DWithState(_, _)) => Assert.assertTrue(true)
         case _ => bug!("livesLabel not found")
     }
 
