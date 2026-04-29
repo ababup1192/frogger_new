@@ -25,30 +25,6 @@ pub enum GameNode {
     case Label2DNode(Label2D)
 }
 
-// ── Eq/Order（レコード型を含むため手動実装） ──
-
-instance Eq[GameNode] {
-    pub def eq(a: GameNode, b: GameNode): Bool = match (a, b) {
-        case (GameNode.Player(a1), GameNode.Player(b1)) =>
-            a1#body == b1#body
-        case (GameNode.HomeSlot(a1), GameNode.HomeSlot(b1)) =>
-            a1#area == b1#area and a1#filled == b1#filled
-        case (GameNode.Vehicle(a1), GameNode.Vehicle(b1)) =>
-            a1#area == b1#area and a1#vx == b1#vx
-        case (GameNode.LogPlatform(a1), GameNode.LogPlatform(b1)) =>
-            a1#area == b1#area and a1#vx == b1#vx and a1#platformWidth == b1#platformWidth
-        case (GameNode.TurtlePlatform(a1), GameNode.TurtlePlatform(b1)) =>
-            a1#area == b1#area and a1#vx == b1#vx and a1#platformWidth == b1#platformWidth
-        case (GameNode.AnimSpriteNode(a1), GameNode.AnimSpriteNode(b1)) => a1 == b1
-        case (GameNode.SpriteNode(a1), GameNode.SpriteNode(b1)) => a1 == b1
-        case (GameNode.AreaNode(a1), GameNode.AreaNode(b1)) => a1 == b1
-        case (GameNode.Marker2DNode(a1), GameNode.Marker2DNode(b1)) => a1 == b1
-        case (GameNode.TimerNode(a1), GameNode.TimerNode(b1)) => a1 == b1
-        case (GameNode.Label2DNode(a1), GameNode.Label2DNode(b1)) => a1 == b1
-        case _ => false
-    }
-}
-
 // ── Node 実装 ──
 
 instance Node[GameNode] {
