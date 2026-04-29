@@ -99,19 +99,19 @@ def testArea2DPriorityDefault(): Unit \ Assert =
     Assert.assertEq(expected = 0, CollisionObject2D.getCollisionPriority(area))
 
 // ========================================================================
-// Node (Scene 連携)
+// EngineNode 経由で Scene に配置
 // ========================================================================
 
-/// Scene に追加して取得できる
+/// Scene に EngineNode.Area2DNode として追加して位置を取得できる
 @Test
 def testArea2DInScene(): Unit \ Assert =
     let area = Area2D.make({x = 50.0f32, y = 100.0f32},
                             CollisionShape2D.RectShape2D({width = 32.0f32, height = 32.0f32}));
-    let scene = Scene.empty()
-        |> Scene.addNode("hitbox", area);
-    match Scene.get("hitbox", scene) {
-        case Some(found) =>
-            let pos = Node2D.getPosition(found);
+    let scene: Scene[Unit] = Scene.empty()
+        |> Scene.addNode("hitbox", EngineNode.Area2DNode(area), ());
+    match Scene.getEngineNode("hitbox" :: Nil, scene) {
+        case Some(engineNode) =>
+            let pos = Node2D.getPosition(engineNode);
             Assert.assertEq(expected = (50.0f32, 100.0f32), (pos#x, pos#y))
         case None => Assert.assertEq(expected = "Some", "None")
     }
@@ -123,8 +123,8 @@ def testArea2DGlobalPosition(): Unit \ Assert =
                               CollisionShape2D.RectShape2D({width = 1.0f32, height = 1.0f32}));
     let child = Area2D.make({x = 16.0f32, y = 20.0f32},
                              CollisionShape2D.RectShape2D({width = 32.0f32, height = 24.0f32}));
-    let scene = Scene.empty()
-        |> Scene.addNode("player", parent)
-        |> Scene.addChild("player", "hitbox", child);
+    let scene: Scene[Unit] = Scene.empty()
+        |> Scene.addNode("player", EngineNode.Area2DNode(parent), ())
+        |> Scene.addChild("player", "hitbox", EngineNode.Area2DNode(child), ());
     let gp = Scene.globalPositionAt("player" :: "hitbox" :: Nil, scene);
     Assert.assertEq(expected = (116.0f32, 120.0f32), (gp#x, gp#y))

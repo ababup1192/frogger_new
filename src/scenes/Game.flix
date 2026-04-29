@@ -1,4 +1,4 @@
-// Game — Frogger ゲーム専用の GameNode 定義とシーン構築・ゲームロジック
+// Game — Frogger ゲーム専用の GameData 定義とシーン構築・ゲームロジック
 
 pub enum GamePhase with Eq, ToString {
     case Playing
@@ -8,106 +8,97 @@ pub enum GamePhase with Eq, ToString {
 }
 
 pub type alias GameState = {
-    scene = Scene[GameNode],
+    scene = Scene[GameData],
     gameTimer = Timer,
     deathTimer = Timer,
     lives = Int32,
     phase = GamePhase
 }
 
-pub enum GameNode {
-    /// プレイヤー（CharacterBody2D）
-    case Player({body = CharacterBody2D, prevKeys = Set[Engine.Key], target = Vec2.Vec2})
-    /// 車両（Area2D + 水平速度）
-    case Vehicle({area = Area2D, vx = Float32})
-    /// 丸太プラットフォーム（Area2D + 水平速度 + プラットフォーム幅）
-    case LogPlatform({area = Area2D, vx = Float32, platformWidth = Float32})
-    /// アニメーション付きスプライト（プレイヤースプライト用）
-    case AnimSpriteNode(AnimatedSprite2D)
-    /// 静的スプライト（背景・車両スプライト・丸太スプライト用）
-    case SpriteNode(Sprite2D)
-    /// ホームスロット（Area2D + 充填済みフラグ）
-    case HomeSlot({area = Area2D, filled = Bool})
-    /// 亀プラットフォーム（Area2D + 水平速度 + プラットフォーム幅）
-    case TurtlePlatform({area = Area2D, vx = Float32, platformWidth = Float32})
-    /// プレイヤー当たり判定（Area2D）
-    case PlayerHitbox(Area2D)
-    /// テキストラベル（HUD 表示）
-    case Label2DNode(Label2D)
+/// ゲーム固有の状態データ
+/// エンジンノード (EngineNode) は SceneEntry 内に別途保持されるため、
+/// ここにはゲームロジックに必要なデータのみを定義する。
+pub enum GameData {
+    /// プレイヤー（前フレームのキー状態 + 移動先ターゲット）
+    case PlayerData({prevKeys = Set[Engine.Key], target = Vec2.Vec2})
+    /// 車両（水平速度）
+    case VehicleData({vx = Float32})
+    /// 丸太/亀プラットフォーム（水平速度 + プラットフォーム幅）
+    case PlatformData({vx = Float32, platformWidth = Float32})
+    /// ホームスロット（充填済みフラグ）
+    case HomeSlotData({filled = Bool})
+    /// プレイヤー当たり判定（データなし、AreaHandler で識別用）
+    case HitboxData
+    /// 静的ノード（スプライト・ラベル等、データなし）
+    case StaticData
 }
 
 // ── Node 実装 ──
 
-instance Node[GameNode] {
-    redef process(delta: Float64, self: GameNode, _path: NodePath,
-                    scene: Scene[GameNode]): (GameNode, Scene[GameNode]) =
+instance Node[GameData] {
+    redef process(delta: Float64, state: GameData, engineNode: EngineNode,
+                    _path: NodePath, scene: Scene[GameData]): (GameData, EngineNode, Scene[GameData]) =
         let dt = Float64.truncateToFloat32(delta);
-        match self {
+        match state {
             // Player: moveToward 物理のみ（入力は handlePlayerInput で処理）
-            case GameNode.Player(r) =>
-                let currentPos = Node2D.getPosition(r#body);
-                let speed = CharacterBody2D.getMoveSpeed(r#body);
-                let newPos = Vec2.moveToward(currentPos, r#target, speed * dt);
-                let newBody = Node2D.setPosition(newPos, r#body);
-                (GameNode.Player({body = newBody | r}), scene)
+            case GameData.PlayerData(r) =>
+                match engineNode {
+                    case EngineNode.Body2DNode(body) =>
+                        let currentPos = Node2D.getPosition(body);
+                        let speed = CharacterBody2D.getMoveSpeed(body);
+                        let newPos = Vec2.moveToward(currentPos, r#target, speed * dt);
+                        let newBody = Node2D.setPosition(newPos, body);
+                        (state, EngineNode.Body2DNode(newBody), scene)
+                    case _ => (state, engineNode, scene)
+                }
             // Vehicle: 水平方向に移動し、画面外でラップ
-            case GameNode.Vehicle(r) =>
-                let pos = Node2D.getPosition(r#area);
+            case GameData.VehicleData(r) =>
+                let pos = Node2D.getPosition(engineNode);
                 let wrappedX = Game.wrapX(r#vx, pos#x + r#vx * dt);
-                let newArea = Node2D.setPosition({x = wrappedX, y = pos#y}, r#area);
-                (GameNode.Vehicle({area = newArea | r}), scene)
-            // LogPlatform: Vehicle と同じ移動＋ラップ
-            case GameNode.LogPlatform(r) =>
-                let pos = Node2D.getPosition(r#area);
+                (state, Node2D.setPosition({x = wrappedX, y = pos#y}, engineNode), scene)
+            // Platform (丸太・亀): Vehicle と同じ移動＋ラップ
+            case GameData.PlatformData(r) =>
+                let pos = Node2D.getPosition(engineNode);
                 let wrappedX = Game.wrapX(r#vx, pos#x + r#vx * dt);
-                let newArea = Node2D.setPosition({x = wrappedX, y = pos#y}, r#area);
-                (GameNode.LogPlatform({area = newArea | r}), scene)
-            // TurtlePlatform: LogPlatform と同じ移動＋ラップ
-            case GameNode.TurtlePlatform(r) =>
-                let pos = Node2D.getPosition(r#area);
-                let wrappedX = Game.wrapX(r#vx, pos#x + r#vx * dt);
-                let newArea = Node2D.setPosition({x = wrappedX, y = pos#y}, r#area);
-                (GameNode.TurtlePlatform({area = newArea | r}), scene)
-            // AnimSpriteNode: フレームを進める
-            case GameNode.AnimSpriteNode(sprite) =>
-                (GameNode.AnimSpriteNode(AnimatedSprite2D.advanceFrame(dt, sprite)), scene)
-            case _ => (self, scene)
+                (state, Node2D.setPosition({x = wrappedX, y = pos#y}, engineNode), scene)
+            // AnimSprite2D のフレーム送りはエンジン側で自動処理されるため不要
+            case _ => (state, engineNode, scene)
         }
 }
 
 // ── AreaHandler 実装 ──
 
-instance AreaHandler[GameNode] {
-    pub def onAreaEntered(_selfPath: NodePath, self: GameNode,
-                          otherPath: NodePath, other: GameNode,
-                          scene: Scene[GameNode]): Scene[GameNode] =
-        match (self, other) {
+instance AreaHandler[GameData] {
+    pub def onAreaEntered(_selfPath: NodePath, selfState: GameData,
+                          otherPath: NodePath, otherState: GameData,
+                          scene: Scene[GameData]): Scene[GameData] =
+        match (selfState, otherState) {
             // プレイヤーの Hitbox が Vehicle と衝突 → スプライトを赤にする
-            case (GameNode.PlayerHitbox(_), GameNode.Vehicle(_)) =>
-                Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
-                    case GameNode.AnimSpriteNode(sprite) =>
-                        GameNode.AnimSpriteNode(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite))
-                    case other2 => other2
+            case (GameData.HitboxData, GameData.VehicleData(_)) =>
+                Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
+                    case EngineNode.AnimSprite2DNode(sprite) =>
+                        EngineNode.AnimSprite2DNode(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite))
+                    case other => other
                 }, scene)
             // プレイヤーの Hitbox が HomeSlot と衝突
-            case (GameNode.PlayerHitbox(_), GameNode.HomeSlot(r)) =>
+            case (GameData.HitboxData, GameData.HomeSlotData(r)) =>
                 // 充填済みスロットに入ったら死亡（スプライトを赤にして checkDeath で処理）
                 if (r#filled)
-                    Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
-                        case GameNode.AnimSpriteNode(sprite) =>
-                            GameNode.AnimSpriteNode(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite))
-                        case other2 => other2
+                    Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
+                        case EngineNode.AnimSprite2DNode(sprite) =>
+                            EngineNode.AnimSprite2DNode(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite))
+                        case other => other
                     }, scene)
                 else
                     scene
-                        |> Scene.mapAt(otherPath, node -> match node {
-                            case GameNode.HomeSlot(hr) =>
-                                GameNode.HomeSlot({filled = true | hr})
+                        |> Scene.mapState(otherPath, st -> match st {
+                            case GameData.HomeSlotData(hr) =>
+                                GameData.HomeSlotData({filled = true | hr})
                             case other2 => other2
                         })
-                        |> Scene.mapAt(List.append(otherPath, "sprite" :: Nil), node -> match node {
-                            case GameNode.SpriteNode(sprite) =>
-                                GameNode.SpriteNode(Sprite2D.setTexture("HomeFrog", sprite))
+                        |> Scene.mapEngineNode(List.append(otherPath, "sprite" :: Nil), engineNode -> match engineNode {
+                            case EngineNode.Sprite2DNode(sprite) =>
+                                EngineNode.Sprite2DNode(Sprite2D.setTexture("HomeFrog", sprite))
                             case other2 => other2
                         })
                         |> Game.resetPlayerPosition
@@ -177,32 +168,28 @@ mod Game {
         let sw = screenW();
         let scene = Scene.empty()
             // ── 背景ゾーン (zIndex=-10: 最背面) ──
-            |> Scene.addNode("bgHome",
-                makeSolidBg(green, {x = 0.0f32, y = homeZoneY()},
-                    width = sw, height = homeZoneH(), zIndex = -10))
-            |> Scene.addNode("bgWater",
-                makeTiledBg("Water", {x = 0.0f32, y = waterZoneY()},
-                    width = sw, height = waterZoneH(), zIndex = -10))
-            |> Scene.addNode("bgMedian",
-                makeTiledBg("Median", {x = 0.0f32, y = medianZoneY()},
-                    width = sw, height = medianZoneH(), zIndex = -10))
-            |> Scene.addNode("bgRoad",
-                makeTiledBg("Road", {x = 0.0f32, y = roadZoneY()},
-                    width = sw, height = roadZoneH(), zIndex = -10))
-            |> Scene.addNode("bgStart",
-                makeSolidBg(green, {x = 0.0f32, y = startZoneY()},
-                    width = sw, height = startZoneH(), zIndex = -10))
+            |> addSolidBg("bgHome", green, {x = 0.0f32, y = homeZoneY()},
+                sw, homeZoneH(), -10)
+            |> addTiledBg("bgWater", "Water", {x = 0.0f32, y = waterZoneY()},
+                sw, waterZoneH(), -10)
+            |> addTiledBg("bgMedian", "Median", {x = 0.0f32, y = medianZoneY()},
+                sw, medianZoneH(), -10)
+            |> addTiledBg("bgRoad", "Road", {x = 0.0f32, y = roadZoneY()},
+                sw, roadZoneH(), -10)
+            |> addSolidBg("bgStart", green, {x = 0.0f32, y = startZoneY()},
+                sw, startZoneH(), -10)
             // ── ホームスロット ──
             |> addAllHomeSlots
             // ── プレイヤー (CharacterBody2D + AnimatedSprite2D + Hitbox) ──
             |> Scene.addNode("player",
-                GameNode.Player({
-                    body = CanvasItem.hide(CharacterBody2D.make(playerStart(), moveSpeed = moveSpeed())),
+                EngineNode.Body2DNode(
+                    CanvasItem.hide(CharacterBody2D.make(playerStart(), moveSpeed = moveSpeed()))),
+                GameData.PlayerData({
                     prevKeys = Set.empty(),
                     target = playerStart()
                 }))
             |> Scene.addChild("player", "Sprite",
-                GameNode.AnimSpriteNode(
+                EngineNode.AnimSprite2DNode(
                     AnimatedSprite2D.make(
                         Map#{
                             "idle" => ("FroggerIdle" :: "FroggerLeap" :: Nil),
@@ -211,12 +198,14 @@ mod Game {
                         initialAnimation = "idle",
                         fps = 4.0f32,
                         {x = 0.0f32, y = 0.0f32},
-                        {x = 4.0f32, y = 4.0f32})))
+                        {x = 4.0f32, y = 4.0f32})),
+                GameData.StaticData)
             |> Scene.addChildAt("player" :: Nil, "Hitbox",
-                GameNode.PlayerHitbox(
+                EngineNode.Area2DNode(
                     CanvasItem.hide(
                         Area2D.make({x = 16.0f32, y = 20.0f32},
-                            CollisionShape2D.RectShape2D({width = 32.0f32, height = 24.0f32})))))
+                            CollisionShape2D.RectShape2D({width = 32.0f32, height = 24.0f32})))),
+                GameData.HitboxData)
             // ── 車両 ──
             |> addAllVehicles
             // ── 丸太 ──
@@ -225,15 +214,17 @@ mod Game {
             |> addAllTurtles
             // ── HUD Label ──
             |> Scene.addNode("timerLabel",
-                GameNode.Label2DNode(
+                EngineNode.Label2DNode(
                     Label2D.make("TIME: 30", fontAtlas, 24.0f32)
                         |> Node2D.setPosition({x = 10.0f32, y = 900.0f32})
-                        |> CanvasItem.setZIndex(10)))
+                        |> CanvasItem.setZIndex(10)),
+                GameData.StaticData)
             |> Scene.addNode("livesLabel",
-                GameNode.Label2DNode(
+                EngineNode.Label2DNode(
                     Label2D.make("LIVES: 3", fontAtlas, 24.0f32)
                         |> Node2D.setPosition({x = 10.0f32, y = 940.0f32})
-                        |> CanvasItem.setZIndex(10)));
+                        |> CanvasItem.setZIndex(10)),
+                GameData.StaticData);
         {
             scene = scene,
             gameTimer = Timer.make(30.0f32) |> Timer.setAutostart(true) |> Timer.ready,
@@ -243,104 +234,53 @@ mod Game {
         }
 
     // ========================================================================
-    // GameNode ヘルパー
-    // ========================================================================
-
-    /// GameNode から内部の Area2D を取り出す（Area2D を持たないバリアントでは bug!）
-    pub def getArea(node: GameNode): Area2D = match node {
-        case GameNode.HomeSlot(r) => r#area
-        case GameNode.Vehicle(r) => r#area
-        case GameNode.LogPlatform(r) => r#area
-        case GameNode.TurtlePlatform(r) => r#area
-        case GameNode.PlayerHitbox(area) => area
-        case _ => bug!("Node has no Area2D")
-    }
-
-    /// 内部の Area2D に関数を適用して再ラップする
-    pub def mapArea(f: Area2D -> Area2D, node: GameNode): GameNode = match node {
-        case GameNode.HomeSlot(r) => GameNode.HomeSlot({area = f(r#area) | r})
-        case GameNode.Vehicle(r) => GameNode.Vehicle({area = f(r#area) | r})
-        case GameNode.LogPlatform(r) => GameNode.LogPlatform({area = f(r#area) | r})
-        case GameNode.TurtlePlatform(r) => GameNode.TurtlePlatform({area = f(r#area) | r})
-        case GameNode.PlayerHitbox(area) => GameNode.PlayerHitbox(f(area))
-        case _ => node
-    }
-
-    /// Sprite2D を Drawable に変換する
-    /// centered=false（背景）の場合は scale を uvScale にしてタイリングする
-    pub def spriteToDrawable(sprite: Sprite2D, globalPos: Vec2.Vec2): Engine.Drawable =
-        let Sprite2D.Sprite2D(r) = sprite;
-        let uvSc: Vec2.Vec2 = if (r#centered) {x = 1.0f32, y = 1.0f32}
-                               else r#scale;
-        {
-            texture = r#texture,
-            position = globalPos,
-            scale = r#scale,
-            rotation = Float64.truncateToFloat32(r#rotation),
-            color = r#modulate,
-            centered = r#centered,
-            uvOffset = {x = 0.0f32, y = 0.0f32},
-            uvScale = uvSc,
-            zIndex = r#zIndex
-        }
-
-    /// AnimatedSprite2D を Drawable に変換する
-    pub def animSpriteToDrawable(sprite: AnimatedSprite2D, globalPos: Vec2.Vec2): Engine.Drawable =
-        let AnimatedSprite2D.AnimatedSprite2D(r) = sprite;
-        {
-            texture = AnimatedSprite2D.currentTexture(sprite),
-            position = globalPos,
-            scale = r#scale,
-            rotation = Float64.truncateToFloat32(r#rotation),
-            color = r#modulate,
-            centered = r#centered,
-            uvOffset = {x = 0.0f32, y = 0.0f32},
-            uvScale = {x = 1.0f32, y = 1.0f32},
-            zIndex = r#zIndex
-        }
-
-    // ========================================================================
     // スプライト生成ヘルパー
     // ========================================================================
 
-    /// タイリング背景スプライトを生成する
-    def makeTiledBg(texture: String, position: Vec2.Vec2,
-                    width: {width = Float32}, height: {height = Float32},
-                    zIndex: {zIndex = Int32}): GameNode =
+    /// タイリング背景スプライトをシーンに追加する
+    def addTiledBg(name: NodeName, texture: String, position: Vec2.Vec2,
+                    width: Float32, height: Float32,
+                    zIndex: Int32, scene: Scene[GameData]): Scene[GameData] =
         let texSize = 16.0f32;
-        GameNode.SpriteNode(Sprite2D.Sprite2D({
-            position = position,
-            rotation = 0.0,
-            scale = {x = width#width / texSize, y = height#height / texSize},
-            skew = 0.0,
-            visible = true,
-            zIndex = zIndex#zIndex,
-            modulate = {r = 1.0f32, g = 1.0f32, b = 1.0f32},
-            texture = texture,
-            centered = false,
-            offset = {x = 0.0f32, y = 0.0f32},
-            flipH = false,
-            flipV = false
-        }))
+        Scene.addNode(name,
+            EngineNode.Sprite2DNode(Sprite2D.Sprite2D({
+                position = position,
+                rotation = 0.0,
+                scale = {x = width / texSize, y = height / texSize},
+                skew = 0.0,
+                visible = true,
+                zIndex = zIndex,
+                modulate = {r = 1.0f32, g = 1.0f32, b = 1.0f32},
+                texture = texture,
+                centered = false,
+                offset = {x = 0.0f32, y = 0.0f32},
+                flipH = false,
+                flipV = false
+            })),
+            GameData.StaticData,
+            scene)
 
-    /// 単色の矩形背景を生成する
-    def makeSolidBg(color: Color, position: Vec2.Vec2,
-                    width: {width = Float32}, height: {height = Float32},
-                    zIndex: {zIndex = Int32}): GameNode =
-        GameNode.SpriteNode(Sprite2D.Sprite2D({
-            position = position,
-            rotation = 0.0,
-            scale = {x = width#width, y = height#height},
-            skew = 0.0,
-            visible = true,
-            zIndex = zIndex#zIndex,
-            modulate = color,
-            texture = "white",
-            centered = false,
-            offset = {x = 0.0f32, y = 0.0f32},
-            flipH = false,
-            flipV = false
-        }))
+    /// 単色の矩形背景をシーンに追加する
+    def addSolidBg(name: NodeName, color: Color, position: Vec2.Vec2,
+                    width: Float32, height: Float32,
+                    zIndex: Int32, scene: Scene[GameData]): Scene[GameData] =
+        Scene.addNode(name,
+            EngineNode.Sprite2DNode(Sprite2D.Sprite2D({
+                position = position,
+                rotation = 0.0,
+                scale = {x = width, y = height},
+                skew = 0.0,
+                visible = true,
+                zIndex = zIndex,
+                modulate = color,
+                texture = "white",
+                centered = false,
+                offset = {x = 0.0f32, y = 0.0f32},
+                flipH = false,
+                flipV = false
+            })),
+            GameData.StaticData,
+            scene)
 
     // ========================================================================
     // 移動ヘルパー
@@ -379,7 +319,7 @@ mod Game {
 
     /// 1 レーン分の Vehicle ノードをシーンに追加する
     def addVehicleLane(laneIdx: Int32, config: VehicleLaneConfig,
-                       scene: Scene[GameNode]): Scene[GameNode] =
+                       scene: Scene[GameData]): Scene[GameData] =
         List.range(0, config#count) |> List.foldLeft((acc, vehicleIdx) -> {
             let name = "v${laneIdx}_${vehicleIdx}";
             let startX = Int32.toFloat32(vehicleIdx) * (tileSize() + config#spacing);
@@ -389,15 +329,17 @@ mod Game {
                 |> Area2D.setMonitorable(true);
             acc
                 |> Scene.addNode(name,
-                    GameNode.Vehicle({area = area, vx = config#vx}))
+                    EngineNode.Area2DNode(area),
+                    GameData.VehicleData({vx = config#vx}))
                 |> Scene.addChild(name, "sprite",
-                    GameNode.SpriteNode(
+                    EngineNode.Sprite2DNode(
                         Sprite2D.make(config#texture, {x = 0.0f32, y = 0.0f32},
-                            {x = 4.0f32, y = 4.0f32})))
+                            {x = 4.0f32, y = 4.0f32})),
+                    GameData.StaticData)
         }, scene)
 
     /// 全車両レーンをシーンに追加する
-    def addAllVehicles(scene: Scene[GameNode]): Scene[GameNode] =
+    def addAllVehicles(scene: Scene[GameData]): Scene[GameData] =
         vehicleLanes()
             |> List.zipWithIndex
             |> List.foldLeft((acc, pair) -> {
@@ -433,7 +375,7 @@ mod Game {
 
     /// 1 本の丸太にスプライト子ノードを追加する
     def addLogSprites(logName: String, middles: Int32,
-                      scene: Scene[GameNode]): Scene[GameNode] =
+                      scene: Scene[GameData]): Scene[GameData] =
         let totalPieces = middles + 2;
         let totalWidth = logWidth(middles);
         List.range(0, totalPieces) |> List.foldLeft((acc, pieceIdx) -> {
@@ -443,15 +385,16 @@ mod Game {
                 else "LogMiddle";
             let offsetX = -1.0f32 * totalWidth / 2.0f32 + 32.0f32 + Int32.toFloat32(pieceIdx) * tileSize();
             Scene.addChild(logName, "s${pieceIdx}",
-                GameNode.SpriteNode(
+                EngineNode.Sprite2DNode(
                     Sprite2D.make(texture, {x = offsetX, y = 0.0f32},
                         {x = 4.0f32, y = 4.0f32})),
+                GameData.StaticData,
                 acc)
         }, scene)
 
     /// 1 レーン分の LogPlatform ノードをシーンに追加する
     def addLogLane(laneIdx: Int32, config: LogLaneConfig,
-                   scene: Scene[GameNode]): Scene[GameNode] =
+                   scene: Scene[GameData]): Scene[GameData] =
         let platformWidth = logWidth(config#middles);
         List.range(0, config#count) |> List.foldLeft((acc, logIdx) -> {
             let name = "l${laneIdx}_${logIdx}";
@@ -463,12 +406,13 @@ mod Game {
                 |> Area2D.setMonitorable(false);
             acc
                 |> Scene.addNode(name,
-                    GameNode.LogPlatform({area = area, vx = config#vx, platformWidth = platformWidth}))
+                    EngineNode.Area2DNode(area),
+                    GameData.PlatformData({vx = config#vx, platformWidth = platformWidth}))
                 |> addLogSprites(name, config#middles)
         }, scene)
 
     /// 全丸太レーンをシーンに追加する
-    def addAllLogs(scene: Scene[GameNode]): Scene[GameNode] =
+    def addAllLogs(scene: Scene[GameData]): Scene[GameData] =
         logLanes()
             |> List.zipWithIndex
             |> List.foldLeft((acc, pair) -> {
@@ -497,19 +441,20 @@ mod Game {
         Int32.toFloat32(sections) * tileSize()
 
     def addTurtleSprites(turtleName: String, sections: Int32,
-                         scene: Scene[GameNode]): Scene[GameNode] =
+                         scene: Scene[GameData]): Scene[GameData] =
         let totalWidth = turtleWidth(sections);
         List.range(0, sections) |> List.foldLeft((acc, sectionIdx) -> {
             let offsetX = -1.0f32 * totalWidth / 2.0f32 + 32.0f32 + Int32.toFloat32(sectionIdx) * tileSize();
             Scene.addChild(turtleName, "s${sectionIdx}",
-                GameNode.SpriteNode(
+                EngineNode.Sprite2DNode(
                     Sprite2D.make("Turtle_01", {x = offsetX, y = 0.0f32},
                         {x = 4.0f32, y = 4.0f32})),
+                GameData.StaticData,
                 acc)
         }, scene)
 
     def addTurtleLane(laneIdx: Int32, config: TurtleLaneConfig,
-                      scene: Scene[GameNode]): Scene[GameNode] =
+                      scene: Scene[GameData]): Scene[GameData] =
         let platformWidth = turtleWidth(config#sections);
         List.range(0, config#count) |> List.foldLeft((acc, turtleIdx) -> {
             let name = "t${laneIdx}_${turtleIdx}";
@@ -521,11 +466,12 @@ mod Game {
                 |> Area2D.setMonitorable(false);
             acc
                 |> Scene.addNode(name,
-                    GameNode.TurtlePlatform({area = area, vx = config#vx, platformWidth = platformWidth}))
+                    EngineNode.Area2DNode(area),
+                    GameData.PlatformData({vx = config#vx, platformWidth = platformWidth}))
                 |> addTurtleSprites(name, config#sections)
         }, scene)
 
-    def addAllTurtles(scene: Scene[GameNode]): Scene[GameNode] =
+    def addAllTurtles(scene: Scene[GameData]): Scene[GameData] =
         turtleLanes()
             |> List.zipWithIndex
             |> List.foldLeft((acc, pair) -> {
@@ -540,7 +486,7 @@ mod Game {
     def homeSlotXPositions(): List[Float32] =
         64.0f32 :: 192.0f32 :: 384.0f32 :: 512.0f32 :: 704.0f32 :: Nil
 
-    def addAllHomeSlots(scene: Scene[GameNode]): Scene[GameNode] =
+    def addAllHomeSlots(scene: Scene[GameData]): Scene[GameData] =
         homeSlotXPositions()
             |> List.zipWithIndex
             |> List.foldLeft((acc, pair) -> {
@@ -553,11 +499,13 @@ mod Game {
                     |> Area2D.setMonitorable(true);
                 acc
                     |> Scene.addNode(name,
-                        GameNode.HomeSlot({area = area, filled = false}))
+                        EngineNode.Area2DNode(area),
+                        GameData.HomeSlotData({filled = false}))
                     |> Scene.addChild(name, "sprite",
-                        GameNode.SpriteNode(
+                        EngineNode.Sprite2DNode(
                             Sprite2D.make("Home", {x = 0.0f32, y = 0.0f32},
-                                {x = 4.0f32, y = 4.0f32})))
+                                {x = 4.0f32, y = 4.0f32})),
+                        GameData.StaticData)
             }, scene)
 
     // ========================================================================
@@ -565,19 +513,19 @@ mod Game {
     // ========================================================================
 
     /// 充填済みホームスロットの数を返す
-    pub def countFilledHomes(scene: Scene[GameNode]): Int32 =
+    pub def countFilledHomes(scene: Scene[GameData]): Int32 =
         homeSlotXPositions()
             |> List.zipWithIndex
             |> List.foldLeft((count, pair) -> {
                 let (idx, _) = pair;
                 match Scene.get("home${idx}", scene) {
-                    case Some(GameNode.HomeSlot(r)) => if (r#filled) count + 1 else count
+                    case Some(GameData.HomeSlotData(r)) => if (r#filled) count + 1 else count
                     case _ => count
                 }
             }, 0)
 
     /// 全ホームスロットが充填済みかを返す
-    pub def allHomesFilled(scene: Scene[GameNode]): Bool =
+    pub def allHomesFilled(scene: Scene[GameData]): Bool =
         countFilledHomes(scene) == List.length(homeSlotXPositions())
 
     /// AreaHandler によるスロット充填後の後処理。
@@ -626,9 +574,9 @@ mod Game {
         else if (direction#y > 0.0f32) 3.1415926535898
         else -1.5707963267949
 
-    pub def getPlayerTarget(scene: Scene[GameNode]): Vec2.Vec2 =
+    pub def getPlayerTarget(scene: Scene[GameData]): Vec2.Vec2 =
         match Scene.get("player", scene) {
-            case Some(GameNode.Player(r)) => r#target
+            case Some(GameData.PlayerData(r)) => r#target
             case _ => playerStart()
         }
 
@@ -638,19 +586,19 @@ mod Game {
 
     pub def handlePlayerInput(state: GameState): GameState \ Engine.Game =
         match Scene.get("player", state#scene) {
-            case Some(GameNode.Player(r)) =>
+            case Some(GameData.PlayerData(r)) =>
                 let currKeys = collectPressedKeys();
                 if (state#phase != GamePhase.Playing)
-                    { scene = Scene.mapAt("player" :: Nil, node -> match node {
-                        case GameNode.Player(pr) => GameNode.Player({prevKeys = currKeys | pr})
+                    { scene = Scene.mapState("player" :: Nil, st -> match st {
+                        case GameData.PlayerData(pr) => GameData.PlayerData({prevKeys = currKeys | pr})
                         case other => other
                     }, state#scene) | state }
                 else {
                     let justPressed = justPressedKeys(currKeys, r#prevKeys);
                     match inputDirection(justPressed) {
                         case None =>
-                            { scene = Scene.mapAt("player" :: Nil, node -> match node {
-                                case GameNode.Player(pr) => GameNode.Player({prevKeys = currKeys | pr})
+                            { scene = Scene.mapState("player" :: Nil, st -> match st {
+                                case GameData.PlayerData(pr) => GameData.PlayerData({prevKeys = currKeys | pr})
                                 case other => other
                             }, state#scene) | state }
                         case Some(dir) =>
@@ -658,14 +606,14 @@ mod Game {
                                 Vec2.add(r#target, Vec2.mul(dir, tileSize())),
                                 playerMin(), playerMax());
                             { scene = state#scene
-                                |> Scene.mapAt("player" :: Nil, node -> match node {
-                                    case GameNode.Player(pr) =>
-                                        GameNode.Player({prevKeys = currKeys, target = nt | pr})
+                                |> Scene.mapState("player" :: Nil, st -> match st {
+                                    case GameData.PlayerData(pr) =>
+                                        GameData.PlayerData({prevKeys = currKeys, target = nt | pr})
                                     case other => other
                                 })
-                                |> Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
-                                    case GameNode.AnimSpriteNode(sprite) =>
-                                        GameNode.AnimSpriteNode(Node2D.setRotation(directionToRotation(dir), sprite))
+                                |> Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
+                                    case EngineNode.AnimSprite2DNode(sprite) =>
+                                        EngineNode.AnimSprite2DNode(Node2D.setRotation(directionToRotation(dir), sprite))
                                     case other => other
                                 })
                               | state }
@@ -685,42 +633,41 @@ mod Game {
         playerPos#x >= logPos#x - halfW and playerPos#x <= logPos#x + halfW and
         playerPos#y >= logPos#y - halfH and playerPos#y <= logPos#y + halfH
 
-    pub def findPlatformVelocity(scene: Scene[GameNode]): Option[Float32] =
+    pub def findPlatformVelocity(scene: Scene[GameData]): Option[Float32] =
         let playerPos = Scene.globalPosition("player", scene);
-        Map.foldLeftWithKey((acc, name, rootNode) ->
+        Map.foldLeftWithKey((acc, name, state) ->
             match acc {
                 case Some(_) => acc
                 case None =>
-                    match rootNode {
-                        case GameNode.LogPlatform(r) =>
-                            let logPos = Scene.globalPosition(name, scene);
-                            if (isOnPlatform(playerPos, logPos, r#platformWidth))
-                                Some(r#vx)
-                            else
-                                None
-                        case GameNode.TurtlePlatform(r) =>
-                            let turtlePos = Scene.globalPosition(name, scene);
-                            if (isOnPlatform(playerPos, turtlePos, r#platformWidth))
+                    match state {
+                        case GameData.PlatformData(r) =>
+                            let platformPos = Scene.globalPosition(name, scene);
+                            if (isOnPlatform(playerPos, platformPos, r#platformWidth))
                                 Some(r#vx)
                             else
                                 None
                         case _ => None
                     }
             },
-            None, Scene.nodes(scene))
+            None, Scene.states(scene))
 
     def applyPlatformRiding(dt: Float32, state: GameState): GameState =
         match findPlatformVelocity(state#scene) {
             case None => state
             case Some(platformVx) =>
                 let shift: Vec2.Vec2 = {x = platformVx * dt, y = 0.0f32};
-                { scene = Scene.mapAt("player" :: Nil, node -> match node {
-                    case GameNode.Player(r) =>
-                        GameNode.Player({
-                            body = Node2D.setPosition(Vec2.add(Node2D.getPosition(r#body), shift), r#body),
-                            target = Vec2.add(r#target, shift) | r})
-                    case other => other
-                }, state#scene) | state }
+                { scene = state#scene
+                    |> Scene.mapEngineNode("player" :: Nil, engineNode -> match engineNode {
+                        case EngineNode.Body2DNode(body) =>
+                            EngineNode.Body2DNode(Node2D.setPosition(Vec2.add(Node2D.getPosition(body), shift), body))
+                        case other => other
+                    })
+                    |> Scene.mapState("player" :: Nil, st -> match st {
+                        case GameData.PlayerData(r) =>
+                            GameData.PlayerData({target = Vec2.add(r#target, shift) | r})
+                        case other => other
+                    })
+                  | state }
         }
 
     // ========================================================================
@@ -733,10 +680,10 @@ mod Game {
           deathTimer = Timer.start(state#deathTimer),
           phase = GamePhase.Dying | state }
 
-    pub def playDeathAnim(color: Color, scene: Scene[GameNode]): Scene[GameNode] =
-        Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
-            case GameNode.AnimSpriteNode(sprite) =>
-                GameNode.AnimSpriteNode(
+    pub def playDeathAnim(color: Color, scene: Scene[GameData]): Scene[GameData] =
+        Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
+            case EngineNode.AnimSprite2DNode(sprite) =>
+                EngineNode.AnimSprite2DNode(
                     sprite
                         |> AnimatedSprite2D.play("dead")
                         |> CanvasItem.setModulate(color))
@@ -744,8 +691,8 @@ mod Game {
         }, scene)
 
     pub def checkDeath(state: GameState): GameState =
-        match Scene.getAt("player" :: "Sprite" :: Nil, state#scene) {
-            case Some(GameNode.AnimSpriteNode(sprite)) =>
+        match Scene.getEngineNode("player" :: "Sprite" :: Nil, state#scene) {
+            case Some(EngineNode.AnimSprite2DNode(sprite)) =>
                 let color = CanvasItem.getModulate(sprite);
                 if (color#g < 0.5f32 and state#phase == GamePhase.Playing)
                     triggerDeath({r = 1.0f32, g = 0.2f32, b = 0.2f32}, state)
@@ -776,12 +723,18 @@ mod Game {
     // ========================================================================
 
     /// プレイヤーとターゲットの位置をスタート地点にリセットする
-    pub def resetPlayerPosition(scene: Scene[GameNode]): Scene[GameNode] =
-        Scene.mapAt("player" :: Nil, node -> match node {
-            case GameNode.Player(r) =>
-                GameNode.Player({body = Node2D.setPosition(playerStart(), r#body), target = playerStart() | r})
-            case other => other
-        }, scene)
+    pub def resetPlayerPosition(scene: Scene[GameData]): Scene[GameData] =
+        scene
+            |> Scene.mapEngineNode("player" :: Nil, engineNode -> match engineNode {
+                case EngineNode.Body2DNode(body) =>
+                    EngineNode.Body2DNode(Node2D.setPosition(playerStart(), body))
+                case other => other
+            })
+            |> Scene.mapState("player" :: Nil, st -> match st {
+                case GameData.PlayerData(r) =>
+                    GameData.PlayerData({target = playerStart() | r})
+                case other => other
+            })
 
     /// タイマーのカウントダウンを進める
     pub def processTimers(dt: Float32, state: GameState): GameState =
@@ -801,9 +754,9 @@ mod Game {
         if (Timer.isTimedOut(state1#deathTimer)) {
             let newLives = state1#lives - 1;
             let newScene = resetPlayerPosition(state1#scene)
-                |> Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
-                    case GameNode.AnimSpriteNode(sprite) =>
-                        GameNode.AnimSpriteNode(
+                |> Scene.mapEngineNode("player" :: "Sprite" :: Nil, engineNode -> match engineNode {
+                    case EngineNode.AnimSprite2DNode(sprite) =>
+                        EngineNode.AnimSprite2DNode(
                             sprite
                                 |> AnimatedSprite2D.play("idle")
                                 |> CanvasItem.setModulate({r = 1.0f32, g = 1.0f32, b = 1.0f32})
@@ -828,14 +781,14 @@ mod Game {
         let timeInt = Float64.truncateToInt32(
             Float32.toFloat64(Float32.max(0.0f32, Timer.getTimeLeft(state#gameTimer))));
         { scene = state#scene
-            |> Scene.mapAt("timerLabel" :: Nil, node -> match node {
-                case GameNode.Label2DNode(label) =>
-                    GameNode.Label2DNode(Label2D.setText("TIME: ${timeInt}", label))
+            |> Scene.mapEngineNode("timerLabel" :: Nil, engineNode -> match engineNode {
+                case EngineNode.Label2DNode(label) =>
+                    EngineNode.Label2DNode(Label2D.setText("TIME: ${timeInt}", label))
                 case other => other
             })
-            |> Scene.mapAt("livesLabel" :: Nil, node -> match node {
-                case GameNode.Label2DNode(label) =>
-                    GameNode.Label2DNode(Label2D.setText("LIVES: ${state#lives}", label))
+            |> Scene.mapEngineNode("livesLabel" :: Nil, engineNode -> match engineNode {
+                case EngineNode.Label2DNode(label) =>
+                    EngineNode.Label2DNode(Label2D.setText("LIVES: ${state#lives}", label))
                 case other => other
             })
           | state }
@@ -888,160 +841,4 @@ mod Game {
             }
         }
 
-}
-
-// ========================================================================
-// ボイラープレート（trait 委譲）
-// ========================================================================
-
-instance CanvasItem[GameNode] {
-    pub def isVisible(node: GameNode): Bool = match node {
-        case GameNode.Player(r) => CanvasItem.isVisible(r#body)
-        case GameNode.AnimSpriteNode(sprite) => CanvasItem.isVisible(sprite)
-        case GameNode.SpriteNode(sprite) => CanvasItem.isVisible(sprite)
-        case GameNode.Label2DNode(label) => CanvasItem.isVisible(label)
-        case _ => CanvasItem.isVisible(Game.getArea(node))
-    }
-    pub def setVisible(visible: Bool, node: GameNode): GameNode = match node {
-        case GameNode.Player(r) =>
-            GameNode.Player({body = CanvasItem.setVisible(visible, r#body) | r})
-        case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(CanvasItem.setVisible(visible, sprite))
-        case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(CanvasItem.setVisible(visible, sprite))
-        case GameNode.Label2DNode(label) => GameNode.Label2DNode(CanvasItem.setVisible(visible, label))
-        case _ => Game.mapArea(area -> CanvasItem.setVisible(visible, area), node)
-    }
-    pub def getModulate(node: GameNode): Color = match node {
-        case GameNode.Player(r) => CanvasItem.getModulate(r#body)
-        case GameNode.AnimSpriteNode(sprite) => CanvasItem.getModulate(sprite)
-        case GameNode.SpriteNode(sprite) => CanvasItem.getModulate(sprite)
-        case GameNode.Label2DNode(label) => CanvasItem.getModulate(label)
-        case _ => CanvasItem.getModulate(Game.getArea(node))
-    }
-    pub def setModulate(color: Color, node: GameNode): GameNode = match node {
-        case GameNode.Player(r) =>
-            GameNode.Player({body = CanvasItem.setModulate(color, r#body) | r})
-        case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(CanvasItem.setModulate(color, sprite))
-        case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(CanvasItem.setModulate(color, sprite))
-        case GameNode.Label2DNode(label) => GameNode.Label2DNode(CanvasItem.setModulate(color, label))
-        case _ => Game.mapArea(area -> CanvasItem.setModulate(color, area), node)
-    }
-    pub def getZIndex(node: GameNode): Int32 = match node {
-        case GameNode.Player(r) => CanvasItem.getZIndex(r#body)
-        case GameNode.AnimSpriteNode(sprite) => CanvasItem.getZIndex(sprite)
-        case GameNode.SpriteNode(sprite) => CanvasItem.getZIndex(sprite)
-        case GameNode.Label2DNode(label) => CanvasItem.getZIndex(label)
-        case _ => CanvasItem.getZIndex(Game.getArea(node))
-    }
-    pub def setZIndex(zIndex: Int32, node: GameNode): GameNode = match node {
-        case GameNode.Player(r) =>
-            GameNode.Player({body = CanvasItem.setZIndex(zIndex, r#body) | r})
-        case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(CanvasItem.setZIndex(zIndex, sprite))
-        case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(CanvasItem.setZIndex(zIndex, sprite))
-        case GameNode.Label2DNode(label) => GameNode.Label2DNode(CanvasItem.setZIndex(zIndex, label))
-        case _ => Game.mapArea(area -> CanvasItem.setZIndex(zIndex, area), node)
-    }
-}
-
-instance Node2D[GameNode] {
-    pub def getPosition(node: GameNode): Vec2.Vec2 = match node {
-        case GameNode.Player(r) => Node2D.getPosition(r#body)
-        case GameNode.AnimSpriteNode(sprite) => Node2D.getPosition(sprite)
-        case GameNode.SpriteNode(sprite) => Node2D.getPosition(sprite)
-        case GameNode.Label2DNode(label) => Node2D.getPosition(label)
-        case _ => Node2D.getPosition(Game.getArea(node))
-    }
-    pub def setPosition(position: Vec2.Vec2, node: GameNode): GameNode = match node {
-        case GameNode.Player(r) =>
-            GameNode.Player({body = Node2D.setPosition(position, r#body) | r})
-        case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(Node2D.setPosition(position, sprite))
-        case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(Node2D.setPosition(position, sprite))
-        case GameNode.Label2DNode(label) => GameNode.Label2DNode(Node2D.setPosition(position, label))
-        case _ => Game.mapArea(area -> Node2D.setPosition(position, area), node)
-    }
-    pub def getRotation(node: GameNode): Float64 = match node {
-        case GameNode.Player(r) => Node2D.getRotation(r#body)
-        case GameNode.AnimSpriteNode(sprite) => Node2D.getRotation(sprite)
-        case GameNode.SpriteNode(sprite) => Node2D.getRotation(sprite)
-        case GameNode.Label2DNode(label) => Node2D.getRotation(label)
-        case _ => Node2D.getRotation(Game.getArea(node))
-    }
-    pub def setRotation(rotation: Float64, node: GameNode): GameNode = match node {
-        case GameNode.Player(r) =>
-            GameNode.Player({body = Node2D.setRotation(rotation, r#body) | r})
-        case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(Node2D.setRotation(rotation, sprite))
-        case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(Node2D.setRotation(rotation, sprite))
-        case GameNode.Label2DNode(label) => GameNode.Label2DNode(Node2D.setRotation(rotation, label))
-        case _ => Game.mapArea(area -> Node2D.setRotation(rotation, area), node)
-    }
-    pub def getScale(node: GameNode): Vec2.Vec2 = match node {
-        case GameNode.Player(r) => Node2D.getScale(r#body)
-        case GameNode.AnimSpriteNode(sprite) => Node2D.getScale(sprite)
-        case GameNode.SpriteNode(sprite) => Node2D.getScale(sprite)
-        case GameNode.Label2DNode(label) => Node2D.getScale(label)
-        case _ => Node2D.getScale(Game.getArea(node))
-    }
-    pub def setScale(scale: Vec2.Vec2, node: GameNode): GameNode = match node {
-        case GameNode.Player(r) =>
-            GameNode.Player({body = Node2D.setScale(scale, r#body) | r})
-        case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(Node2D.setScale(scale, sprite))
-        case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(Node2D.setScale(scale, sprite))
-        case GameNode.Label2DNode(label) => GameNode.Label2DNode(Node2D.setScale(scale, label))
-        case _ => Game.mapArea(area -> Node2D.setScale(scale, area), node)
-    }
-    pub def getSkew(node: GameNode): Float64 = match node {
-        case GameNode.Player(r) => Node2D.getSkew(r#body)
-        case GameNode.AnimSpriteNode(sprite) => Node2D.getSkew(sprite)
-        case GameNode.SpriteNode(sprite) => Node2D.getSkew(sprite)
-        case GameNode.Label2DNode(label) => Node2D.getSkew(label)
-        case _ => Node2D.getSkew(Game.getArea(node))
-    }
-    pub def setSkew(skew: Float64, node: GameNode): GameNode = match node {
-        case GameNode.Player(r) =>
-            GameNode.Player({body = Node2D.setSkew(skew, r#body) | r})
-        case GameNode.AnimSpriteNode(sprite) => GameNode.AnimSpriteNode(Node2D.setSkew(skew, sprite))
-        case GameNode.SpriteNode(sprite) => GameNode.SpriteNode(Node2D.setSkew(skew, sprite))
-        case GameNode.Label2DNode(label) => GameNode.Label2DNode(Node2D.setSkew(skew, label))
-        case _ => Game.mapArea(area -> Node2D.setSkew(skew, area), node)
-    }
-}
-
-instance CollisionObject2D[GameNode] {
-    pub def getCollisionShape(node: GameNode): Option[CollisionShape2D] = match node {
-        case GameNode.Player(_) => None
-        case GameNode.AnimSpriteNode(_) => None
-        case GameNode.SpriteNode(_) => None
-        case GameNode.Label2DNode(_) => None
-        case _ => CollisionObject2D.getCollisionShape(Game.getArea(node))
-    }
-    pub def isMonitoring(node: GameNode): Bool = match node {
-        case GameNode.Player(_) => false
-        case GameNode.AnimSpriteNode(_) => false
-        case GameNode.SpriteNode(_) => false
-        case GameNode.Label2DNode(_) => false
-        case _ => CollisionObject2D.isMonitoring(Game.getArea(node))
-    }
-    pub def isMonitorable(node: GameNode): Bool = match node {
-        case GameNode.Player(_) => false
-        case GameNode.AnimSpriteNode(_) => false
-        case GameNode.SpriteNode(_) => false
-        case GameNode.Label2DNode(_) => false
-        case _ => CollisionObject2D.isMonitorable(Game.getArea(node))
-    }
-    redef getCollisionPriority(node: GameNode): Int32 = match node {
-        case GameNode.Player(_) => 0
-        case GameNode.AnimSpriteNode(_) => 0
-        case GameNode.SpriteNode(_) => 0
-        case GameNode.Label2DNode(_) => 0
-        case _ => CollisionObject2D.getCollisionPriority(Game.getArea(node))
-    }
-}
-
-instance Engine.Renderable[GameNode] {
-    pub def toDrawables(node: GameNode, globalPos: Vec2.Vec2): List[Engine.Drawable] =
-        match node {
-            case GameNode.SpriteNode(sprite) => Game.spriteToDrawable(sprite, globalPos) :: Nil
-            case GameNode.AnimSpriteNode(sprite) => Game.animSpriteToDrawable(sprite, globalPos) :: Nil
-            case GameNode.Label2DNode(label) => Label2D.toDrawables(label, globalPos)
-            case _ => Scene.toDrawable("white", node, globalPos) :: Nil
-        }
 }

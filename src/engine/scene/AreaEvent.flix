@@ -37,19 +37,19 @@ pub eff OnAreaEvent {
 pub mod AreaEvent {
 
     // ========================================================================
-    // 重なり検出（純粋関数）
+    // 重なり検出（純粋関数 — EngineNode の CollisionObject2D を直接使用）
     // ========================================================================
 
     /// Scene 内の全 CollisionObject2D ペアの重なりを検出する。
     /// monitoring / monitorable フラグを考慮し、有効なペアのみ返す。
-    pub def detectOverlaps(scene: Scene[n]): List[AreaOverlap] with CollisionObject2D[n], Node[n] =
+    pub def detectOverlaps(scene: Scene[s]): List[AreaOverlap] =
         let paths = Scene.preorderPaths(scene);
         let areas = List.filterMap(path ->
-            Scene.getAt(path, scene) |> Option.flatMap(node ->
-                CollisionObject2D.getCollisionShape(node) |> Option.map(shape ->
+            Scene.getEngineNode(path, scene) |> Option.flatMap(engineNode ->
+                CollisionObject2D.getCollisionShape(engineNode) |> Option.map(shape ->
                     (path, Scene.globalPositionAt(path, scene), shape,
-                     CollisionObject2D.isMonitoring(node),
-                     CollisionObject2D.isMonitorable(node))
+                     CollisionObject2D.isMonitoring(engineNode),
+                     CollisionObject2D.isMonitorable(engineNode))
                 )
             ), paths);
         collectPairs(areas)
@@ -89,7 +89,7 @@ pub mod AreaEvent {
             overlaps)
 
     /// 検出 + 発火を一括で行うショートカット。
-    pub def emitOverlapEvents(scene: Scene[n]): Unit \ OnAreaEvent with CollisionObject2D[n], Node[n] =
+    pub def emitOverlapEvents(scene: Scene[s]): Unit \ OnAreaEvent =
         detectOverlaps(scene) |> fireAreaEnteredAll
 
     // ========================================================================
@@ -97,7 +97,7 @@ pub mod AreaEvent {
     // ========================================================================
 
     /// Scene.processAll + 重なりイベント発火を一括で行う。
-    pub def processAndEmit(delta: Float64, paused: Bool, scene: Scene[n]): Scene[n] \ OnAreaEvent with CollisionObject2D[n], Node[n] =
+    pub def processAndEmit(delta: Float64, paused: Bool, scene: Scene[s]): Scene[s] \ OnAreaEvent with Node[s] =
         let updated = Scene.processAll(delta, paused, scene);
         emitOverlapEvents(updated);
         updated
@@ -116,17 +116,17 @@ pub mod AreaEvent {
     /// Scene.processAll + 重なり検出 + AreaHandler.onAreaEntered / onAreaExited ディスパッチ。
     /// Scene 内の prevOverlaps を読み書きし、離脱したペアに onAreaExited を発火する。
     pub def processAndEmitHandled(delta: Float64, paused: Bool,
-                                  scene: Scene[n]): Scene[n]
-            with CollisionObject2D[n], Node[n], AreaHandler[n] =
+                                  scene: Scene[s]): Scene[s]
+            with Node[s], AreaHandler[s] =
         let prevOverlaps = Scene.getPrevOverlaps(scene);
         let updated = Scene.processAll(delta, paused, scene);
         let overlaps = detectOverlaps(updated);
         let currentPairs = toOverlapPairSet(overlaps);
         // 現在重なっているペアに onAreaEntered を発火
         let sceneAfterEnter = List.foldLeft((sc, ov) ->
-            match (Scene.getAt(ov#selfPath, sc), Scene.getAt(ov#other#path, sc)) {
-                case (Some(self), Some(other)) =>
-                    AreaHandler.onAreaEntered(ov#selfPath, self, ov#other#path, other, sc)
+            match (Scene.getState(ov#selfPath, sc), Scene.getState(ov#other#path, sc)) {
+                case (Some(selfState), Some(otherState)) =>
+                    AreaHandler.onAreaEntered(ov#selfPath, selfState, ov#other#path, otherState, sc)
                 case _ => sc
             },
             updated,
@@ -135,9 +135,9 @@ pub mod AreaEvent {
         let exitedPairs = Set.difference(prevOverlaps, currentPairs);
         let sceneAfterExit = Set.foldLeft((sc, pair) ->
             let (selfPath, otherPath) = pair;
-            match (Scene.getAt(selfPath, sc), Scene.getAt(otherPath, sc)) {
-                case (Some(self), Some(other)) =>
-                    AreaHandler.onAreaExited(selfPath, self, otherPath, other, sc)
+            match (Scene.getState(selfPath, sc), Scene.getState(otherPath, sc)) {
+                case (Some(selfState), Some(otherState)) =>
+                    AreaHandler.onAreaExited(selfPath, selfState, otherPath, otherState, sc)
                 case _ => sc
             },
             sceneAfterEnter,

@@ -134,9 +134,4 @@ instance CollisionObject2D[Area2D] {
 
 // -- Node 実装 --
 
-instance Node[Area2D] {
-    redef getSelf(path: NodePath, scene: Scene[Area2D]): Option[Area2D] =
-        Scene.getAt(path, scene)
-    redef setSelf(path: NodePath, self: Area2D, scene: Scene[Area2D]): Scene[Area2D] =
-        Scene.setAt(path, self, scene)
-}
+instance Node[Area2D] {}

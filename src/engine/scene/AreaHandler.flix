@@ -2,32 +2,35 @@
 ///
 /// OnAreaEvent エフェクトの代替。外部ハンドラではなく、
 /// ノード型自身が衝突応答ロジックを持つ。
+///
+/// ゲーム固有の状態 s を受け取り、エンジンノードへのアクセスが必要な場合は
+/// Scene.getEngineNode / Scene.mapEngineNode を使う。
 
-pub trait AreaHandler[n] {
+pub trait AreaHandler[s] {
 
-    /// 自分(self)のエリアに他ノード(other)が侵入したとき呼ばれる。
+    /// 自分のエリアに他ノードが侵入したとき呼ばれる。
     /// Scene を書き換えて返す。
     ///
     /// selfPath: 自分のパス
-    /// self: 自分の実体
+    /// selfState: 自分のゲーム状態
     /// otherPath: 相手のパス
-    /// other: 相手の実体
+    /// otherState: 相手のゲーム状態
     /// scene: 現在のシーン
     pub def onAreaEntered(
         selfPath: NodePath,
-        self: n,
+        selfState: s,
         otherPath: NodePath,
-        other: n,
-        scene: Scene[n]
-    ): Scene[n]
+        otherState: s,
+        scene: Scene[s]
+    ): Scene[s]
 
-    /// 自分(self)のエリアから他ノード(other)が離脱したとき呼ばれる。
+    /// 自分のエリアから他ノードが離脱したとき呼ばれる。
     /// デフォルトでは何もしない。
     pub def onAreaExited(
         _selfPath: NodePath,
-        _self: n,
+        _selfState: s,
         _otherPath: NodePath,
-        _other: n,
-        scene: Scene[n]
-    ): Scene[n] = scene
+        _otherState: s,
+        scene: Scene[s]
+    ): Scene[s] = scene
 }

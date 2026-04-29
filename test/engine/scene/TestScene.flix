@@ -1,41 +1,18 @@
 // Tests for Scene module
 //
-// テスト用の軽量ノード型 TNode を定義して使用する。
-// TNode は Eq, Order を実装し、x/y 座標だけを持つ最小構成。
+// テスト用の軽量状態型 TState を定義して使用する。
+// 位置情報は EngineNode (Marker2D) が保持し、TState は追加データなしのタグ。
 
-/// テスト用ノード: x, y 座標だけを持つ最小のノード
-enum TNode with Eq, Order, ToString {
-    case TNode(Float32, Float32)
+/// テスト用状態: 追加データなしの最小構成
+enum TState with Eq, Order, ToString {
+    case TState
 }
 
-/// テスト用ヘルパー: 指定位置に TNode を作る
-def tnode(x: Float32, y: Float32): TNode =
-    TNode.TNode(x, y)
+instance Node[TState] {}
 
-instance CanvasItem[TNode] {
-    pub def isVisible(_node: TNode): Bool = true
-    pub def setVisible(_visible: Bool, node: TNode): TNode = node
-    pub def getModulate(_node: TNode): Color = {r = 1.0f32, g = 1.0f32, b = 1.0f32}
-    pub def setModulate(_color: Color, node: TNode): TNode = node
-    pub def getZIndex(_node: TNode): Int32 = 0i32
-    pub def setZIndex(_zIndex: Int32, node: TNode): TNode = node
-}
-
-instance Node2D[TNode] {
-    pub def getPosition(node: TNode): Vec2.Vec2 =
-        let TNode.TNode(x, y) = node;
-        {x = x, y = y}
-    pub def setPosition(position: Vec2.Vec2, _node: TNode): TNode =
-        TNode.TNode(position#x, position#y)
-    pub def getRotation(_node: TNode): Float64 = 0.0f64
-    pub def setRotation(_rotation: Float64, node: TNode): TNode = node
-    pub def getScale(_node: TNode): Vec2.Vec2 = Vec2.one()
-    pub def setScale(_scale: Vec2.Vec2, node: TNode): TNode = node
-    pub def getSkew(_node: TNode): Float64 = 0.0f64
-    pub def setSkew(_skew: Float64, node: TNode): TNode = node
-}
-
-instance Node[TNode] {}
+/// テスト用ヘルパー: 指定位置に Marker2D ノードを持つ EngineNode を作る
+def tmarker(x: Float32, y: Float32): EngineNode =
+    EngineNode.Marker2DNode(Marker2D.make({x = x, y = y}))
 
 // ========================================================================
 // empty
@@ -44,68 +21,81 @@ instance Node[TNode] {}
 /// 空のシーンにはノードがない
 @Test
 def testSceneEmpty(): Unit \ Assert =
-    let scene: Scene[TNode] = Scene.empty();
-    Assert.assertEq(expected = 0, Scene.nodes(scene) |> Map.size)
+    let scene: Scene[TState] = Scene.empty();
+    Assert.assertEq(expected = 0, Scene.states(scene) |> Map.size)
 
 // ========================================================================
 // addNode / get
 // ========================================================================
 
-/// addNode でルートとして追加し、get で取得できる
+/// addNode でルートとして追加し、getState で取得できる
 @Test
 def testSceneAddNodeAndGet(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("player", tnode(10.0f32, 20.0f32));
-    Assert.assertEq(expected = Some(tnode(10.0f32, 20.0f32)), Scene.get("player", scene))
+        |> Scene.addNode("player", tmarker(10.0f32, 20.0f32), TState.TState);
+    Assert.assertEq(expected = Some(TState.TState), Scene.get("player", scene))
 
 /// 存在しないノードの get は None を返す
 @Test
 def testSceneGetNone(): Unit \ Assert =
-    let scene: Scene[TNode] = Scene.empty();
-    Assert.assertEq(expected = (None: Option[TNode]), Scene.get("missing", scene))
+    let scene: Scene[TState] = Scene.empty();
+    Assert.assertEq(expected = (None: Option[TState]), Scene.get("missing", scene))
 
 // ========================================================================
-// set
+// set (状態の更新)
 // ========================================================================
 
-/// set でノードの値を更新できる
+/// set でノードの状態を更新できる
 @Test
 def testSceneSet(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("a", tnode(0.0f32, 0.0f32))
-        |> Scene.set("a", tnode(99.0f32, 99.0f32));
-    Assert.assertEq(expected = Some(tnode(99.0f32, 99.0f32)), Scene.get("a", scene))
+        |> Scene.addNode("a", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.set("a", TState.TState);
+    Assert.assertEq(expected = Some(TState.TState), Scene.get("a", scene))
 
-/// 存在しないノードへの set はシーンを変更しない
+/// 存在しないノードへの set はシーンを変更し��い
 @Test
 def testSceneSetMissing(): Unit \ Assert =
-    let scene: Scene[TNode] = Scene.empty()
-        |> Scene.set("ghost", tnode(1.0f32, 1.0f32));
-    Assert.assertEq(expected = 0, Scene.nodes(scene) |> Map.size)
+    let scene: Scene[TState] = Scene.empty()
+        |> Scene.set("ghost", TState.TState);
+    Assert.assertEq(expected = 0, Scene.states(scene) |> Map.size)
+
+// ========================================================================
+// setEngineNode（エンジンノードの更新）
+// ========================================================================
+
+/// setEngineNode でエンジンノードを更新し、位置が変わることを確認
+@Test
+def testSceneSetEngineNode(): Unit \ Assert =
+    let scene = Scene.empty()
+        |> Scene.addNode("a", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.setEngineNode("a" :: Nil, tmarker(99.0f32, 99.0f32));
+    let gp = Scene.globalPosition("a", scene);
+    Assert.assertEq(expected = (99.0f32, 99.0f32), (gp#x, gp#y))
 
 // ========================================================================
 // remove（ルートノード）
 // ========================================================================
 
-/// ルートノードを remove で削除できる
+/// ルートノードを remove で削除��きる
 @Test
 def testSceneRemoveRoot(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("a", tnode(0.0f32, 0.0f32))
+        |> Scene.addNode("a", tmarker(0.0f32, 0.0f32), TState.TState)
         |> Scene.remove("a");
-    Assert.assertEq(expected = (None: Option[TNode]), Scene.get("a", scene))
+    Assert.assertEq(expected = (None: Option[TState]), Scene.get("a", scene))
 
 // ========================================================================
-// nodes（後方互換）
+// states（ルートノード一覧）
 // ========================================================================
 
-/// nodes はルートノードを Map[NodeName, n] として返す
+/// states はルートノードの状態を Map として返す
 @Test
-def testSceneNodes(): Unit \ Assert =
+def testSceneStates(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("a", tnode(1.0f32, 0.0f32))
-        |> Scene.addNode("b", tnode(2.0f32, 0.0f32));
-    Assert.assertEq(expected = 2, Scene.nodes(scene) |> Map.size)
+        |> Scene.addNode("a", tmarker(1.0f32, 0.0f32), TState.TState)
+        |> Scene.addNode("b", tmarker(2.0f32, 0.0f32), TState.TState);
+    Assert.assertEq(expected = 2, Scene.states(scene) |> Map.size)
 
 // ========================================================================
 // addChild / getParent / getChildren
@@ -119,25 +109,25 @@ def testSceneNodes(): Unit \ Assert =
 @Test
 def testSceneAddChild(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(0.0f32, 0.0f32))
-        |> Scene.addChild("root", "child", tnode(10.0f32, 0.0f32));
+        |> Scene.addNode("root", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChild("root", "child", tmarker(10.0f32, 0.0f32), TState.TState);
     let parent = Scene.getParent("root" :: "child" :: Nil, scene);
     let children = Scene.getChildren("root", scene);
     Assert.assertEq(expected = (Some("root" :: Nil), "child" :: Nil), (parent, children))
 
-/// addChild で追加した子ノードを getAt で取得できる
+/// addChild で追加した子ノードを getState で取得���きる
 @Test
 def testSceneAddChildGet(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(0.0f32, 0.0f32))
-        |> Scene.addChild("root", "child", tnode(10.0f32, 0.0f32));
-    Assert.assertEq(expected = Some(tnode(10.0f32, 0.0f32)), Scene.getAt("root" :: "child" :: Nil, scene))
+        |> Scene.addNode("root", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChild("root", "child", tmarker(10.0f32, 0.0f32), TState.TState);
+    Assert.assertEq(expected = Some(TState.TState), Scene.getState("root" :: "child" :: Nil, scene))
 
-/// 存在しない親への addChild はシーンを変更しない
+/// 存在しない親への addChild はシ��ンを変更しない
 @Test
 def testSceneAddChildMissingParent(): Unit \ Assert =
-    let scene: Scene[TNode] = Scene.empty()
-        |> Scene.addChild("ghost", "child", tnode(0.0f32, 0.0f32));
+    let scene: Scene[TState] = Scene.empty()
+        |> Scene.addChild("ghost", "child", tmarker(0.0f32, 0.0f32), TState.TState);
     Assert.assertEq(expected = 0, Scene.nodeCount(scene))
 
 /// 深い階層の親子関係を構築できる
@@ -149,9 +139,9 @@ def testSceneAddChildMissingParent(): Unit \ Assert =
 @Test
 def testSceneDeepHierarchy(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(0.0f32, 0.0f32))
-        |> Scene.addChild("root", "a", tnode(0.0f32, 0.0f32))
-        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tnode(0.0f32, 0.0f32));
+        |> Scene.addNode("root", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChild("root", "a", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tmarker(0.0f32, 0.0f32), TState.TState);
     let parentOfB = Scene.getParent("root" :: "a" :: "b" :: Nil, scene);
     let childrenOfA = Scene.getChildrenAt("root" :: "a" :: Nil, scene);
     Assert.assertEq(expected = (Some("root" :: "a" :: Nil), "b" :: Nil), (parentOfB, childrenOfA))
@@ -160,13 +150,13 @@ def testSceneDeepHierarchy(): Unit \ Assert =
 @Test
 def testSceneGetParentRoot(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(0.0f32, 0.0f32));
+        |> Scene.addNode("root", tmarker(0.0f32, 0.0f32), TState.TState);
     Assert.assertEq(expected = (None: Option[NodePath]), Scene.getParent("root" :: Nil, scene))
 
 /// 存在しないノードの getChildren は空リストを返す
 @Test
 def testSceneGetChildrenMissing(): Unit \ Assert =
-    let scene: Scene[TNode] = Scene.empty();
+    let scene: Scene[TState] = Scene.empty();
     Assert.assertEq(expected = (Nil: List[NodeName]), Scene.getChildren("missing", scene))
 
 // ========================================================================
@@ -177,14 +167,14 @@ def testSceneGetChildrenMissing(): Unit \ Assert =
 ///
 ///   root            (remove "root")
 ///    └─ a       →   空のシーン
-///        └─ b
+///        └�� b
 ///
 @Test
 def testSceneRemoveRecursive(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(0.0f32, 0.0f32))
-        |> Scene.addChild("root", "a", tnode(0.0f32, 0.0f32))
-        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tnode(0.0f32, 0.0f32))
+        |> Scene.addNode("root", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChild("root", "a", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tmarker(0.0f32, 0.0f32), TState.TState)
         |> Scene.remove("root");
     Assert.assertEq(expected = 0, Scene.nodeCount(scene))
 
@@ -197,15 +187,15 @@ def testSceneRemoveRecursive(): Unit \ Assert =
 @Test
 def testSceneRemoveMiddle(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(0.0f32, 0.0f32))
-        |> Scene.addChild("root", "a", tnode(0.0f32, 0.0f32))
-        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tnode(0.0f32, 0.0f32))
+        |> Scene.addNode("root", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChild("root", "a", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tmarker(0.0f32, 0.0f32), TState.TState)
         |> Scene.removeAt("root" :: "a" :: Nil);
-    let aExists = Scene.getAt("root" :: "a" :: Nil, scene);
-    let bExists = Scene.getAt("root" :: "a" :: "b" :: Nil, scene);
+    let aExists = Scene.getState("root" :: "a" :: Nil, scene);
+    let bExists = Scene.getState("root" :: "a" :: "b" :: Nil, scene);
     let rootChildren = Scene.getChildren("root", scene);
     Assert.assertEq(
-        expected = ((None: Option[TNode]), (None: Option[TNode]), (Nil: List[NodeName])),
+        expected = ((None: Option[TState]), (None: Option[TState]), (Nil: List[NodeName])),
         (aExists, bExists, rootChildren)
     )
 
@@ -217,22 +207,22 @@ def testSceneRemoveMiddle(): Unit \ Assert =
 @Test
 def testSceneGlobalPositionRoot(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(100.0f32, 50.0f32));
+        |> Scene.addNode("root", tmarker(100.0f32, 50.0f32), TState.TState);
     let gp = Scene.globalPosition("root", scene);
     Assert.assertEq(expected = (100.0f32, 50.0f32), (gp#x, gp#y))
 
 /// 親子の position が合算される
 ///
 ///   root (100, 100)
-///    └─ a (50, 50)     → globalPositionAt("root"::"a"::Nil) = (150, 150)
+///    ��─ a (50, 50)     → globalPositionAt("root"::"a"::Nil) = (150, 150)
 ///        └─ b (10, 10) → globalPositionAt("root"::"a"::"b"::Nil) = (160, 160)
 ///
 @Test
 def testSceneGlobalPositionChain(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(100.0f32, 100.0f32))
-        |> Scene.addChild("root", "a", tnode(50.0f32, 50.0f32))
-        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tnode(10.0f32, 10.0f32));
+        |> Scene.addNode("root", tmarker(100.0f32, 100.0f32), TState.TState)
+        |> Scene.addChild("root", "a", tmarker(50.0f32, 50.0f32), TState.TState)
+        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tmarker(10.0f32, 10.0f32), TState.TState);
     let gpA = Scene.globalPositionAt("root" :: "a" :: Nil, scene);
     let gpB = Scene.globalPositionAt("root" :: "a" :: "b" :: Nil, scene);
     Assert.assertEq(
@@ -244,12 +234,12 @@ def testSceneGlobalPositionChain(): Unit \ Assert =
 @Test
 def testSceneMovingParentMovesChildren(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(100.0f32, 100.0f32))
-        |> Scene.addChild("root", "a", tnode(50.0f32, 50.0f32))
-        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tnode(10.0f32, 10.0f32));
+        |> Scene.addNode("root", tmarker(100.0f32, 100.0f32), TState.TState)
+        |> Scene.addChild("root", "a", tmarker(50.0f32, 50.0f32), TState.TState)
+        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tmarker(10.0f32, 10.0f32), TState.TState);
     let beforeA = Scene.globalPositionAt("root" :: "a" :: Nil, scene);
     let beforeB = Scene.globalPositionAt("root" :: "a" :: "b" :: Nil, scene);
-    let moved = Scene.set("root", tnode(200.0f32, 200.0f32), scene);
+    let moved = Scene.setEngineNode("root" :: Nil, tmarker(200.0f32, 200.0f32), scene);
     let afterA = Scene.globalPositionAt("root" :: "a" :: Nil, moved);
     let afterB = Scene.globalPositionAt("root" :: "a" :: "b" :: Nil, moved);
     Assert.assertEq(
@@ -263,10 +253,10 @@ def testSceneMovingParentMovesChildren(): Unit \ Assert =
 @Test
 def testSceneMovingMiddleNodeMovesDescendants(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(100.0f32, 100.0f32))
-        |> Scene.addChild("root", "a", tnode(50.0f32, 50.0f32))
-        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tnode(10.0f32, 10.0f32))
-        |> Scene.setAt("root" :: "a" :: Nil, tnode(200.0f32, 200.0f32));
+        |> Scene.addNode("root", tmarker(100.0f32, 100.0f32), TState.TState)
+        |> Scene.addChild("root", "a", tmarker(50.0f32, 50.0f32), TState.TState)
+        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tmarker(10.0f32, 10.0f32), TState.TState)
+        |> Scene.setEngineNode("root" :: "a" :: Nil, tmarker(200.0f32, 200.0f32));
     let gpRoot = Scene.globalPosition("root", scene);
     let gpA = Scene.globalPositionAt("root" :: "a" :: Nil, scene);
     let gpB = Scene.globalPositionAt("root" :: "a" :: "b" :: Nil, scene);
@@ -275,10 +265,10 @@ def testSceneMovingMiddleNodeMovesDescendants(): Unit \ Assert =
         (gpRoot#x, gpRoot#y, gpA#x, gpA#y, gpB#x, gpB#y)
     )
 
-/// 存在しないノードの globalPosition は zero を返す
+/// 存���しないノードの globalPosition は zero を返す
 @Test
 def testSceneGlobalPositionMissing(): Unit \ Assert =
-    let scene: Scene[TNode] = Scene.empty();
+    let scene: Scene[TState] = Scene.empty();
     let gp = Scene.globalPosition("missing", scene);
     Assert.assertEq(expected = (0.0f32, 0.0f32), (gp#x, gp#y))
 
@@ -290,15 +280,11 @@ def testSceneGlobalPositionMissing(): Unit \ Assert =
 @Test
 def testSceneSetGlobalPosition(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(100.0f32, 0.0f32))
-        |> Scene.addChild("root", "a", tnode(10.0f32, 0.0f32))
+        |> Scene.addNode("root", tmarker(100.0f32, 0.0f32), TState.TState)
+        |> Scene.addChild("root", "a", tmarker(10.0f32, 0.0f32), TState.TState)
         |> Scene.setGlobalPositionAt("root" :: "a" :: Nil, {x = 200.0f32, y = 0.0f32});
-    let localNode = Scene.getAt("root" :: "a" :: Nil, scene);
     let gp = Scene.globalPositionAt("root" :: "a" :: Nil, scene);
-    Assert.assertEq(
-        expected = (Some(tnode(100.0f32, 0.0f32)), 200.0f32, 0.0f32),
-        (localNode, gp#x, gp#y)
-    )
+    Assert.assertEq(expected = (200.0f32, 0.0f32), (gp#x, gp#y))
 
 // ========================================================================
 // preorderPaths
@@ -308,16 +294,16 @@ def testSceneSetGlobalPosition(): Unit \ Assert =
 ///
 ///   root
 ///    ├─ a
-///    │   └─ a1
+///    ��   └─ a1
 ///    └─ b
 ///
 @Test
 def testScenePreorderPaths(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(0.0f32, 0.0f32))
-        |> Scene.addChild("root", "a", tnode(0.0f32, 0.0f32))
-        |> Scene.addChildAt("root" :: "a" :: Nil, "a1", tnode(0.0f32, 0.0f32))
-        |> Scene.addChild("root", "b", tnode(0.0f32, 0.0f32));
+        |> Scene.addNode("root", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChild("root", "a", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChildAt("root" :: "a" :: Nil, "a1", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChild("root", "b", tmarker(0.0f32, 0.0f32), TState.TState);
     let paths = Scene.preorderPaths(scene);
     Assert.assertEq(
         expected = ("root" :: Nil) :: ("root" :: "a" :: Nil) :: ("root" :: "a" :: "a1" :: Nil) :: ("root" :: "b" :: Nil) :: Nil,
@@ -328,9 +314,9 @@ def testScenePreorderPaths(): Unit \ Assert =
 @Test
 def testScenePreorderMultipleRoots(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("x", tnode(0.0f32, 0.0f32))
-        |> Scene.addNode("y", tnode(0.0f32, 0.0f32))
-        |> Scene.addChild("x", "x1", tnode(0.0f32, 0.0f32));
+        |> Scene.addNode("x", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addNode("y", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChild("x", "x1", tmarker(0.0f32, 0.0f32), TState.TState);
     let paths = Scene.preorderPaths(scene);
     Assert.assertEq(
         expected = ("x" :: Nil) :: ("x" :: "x1" :: Nil) :: ("y" :: Nil) :: Nil,
@@ -345,9 +331,9 @@ def testScenePreorderMultipleRoots(): Unit \ Assert =
 @Test
 def testSceneNodeCount(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(0.0f32, 0.0f32))
-        |> Scene.addChild("root", "a", tnode(0.0f32, 0.0f32))
-        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tnode(0.0f32, 0.0f32));
+        |> Scene.addNode("root", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChild("root", "a", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChildAt("root" :: "a" :: Nil, "b", tmarker(0.0f32, 0.0f32), TState.TState);
     Assert.assertEq(expected = 3, Scene.nodeCount(scene))
 
 // ========================================================================
@@ -358,26 +344,27 @@ def testSceneNodeCount(): Unit \ Assert =
 @Test
 def testSceneProcessAll(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(0.0f32, 0.0f32))
-        |> Scene.addChild("root", "a", tnode(1.0f32, 0.0f32))
+        |> Scene.addNode("root", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addChild("root", "a", tmarker(1.0f32, 0.0f32), TState.TState)
         |> Scene.processAll(0.016f64, false);
-    Assert.assertEq(expected = Some(tnode(1.0f32, 0.0f32)), Scene.getAt("root" :: "a" :: Nil, scene))
+    let gp = Scene.globalPositionAt("root" :: "a" :: Nil, scene);
+    Assert.assertEq(expected = (1.0f32, 0.0f32), (gp#x, gp#y))
 
 // ========================================================================
-// 同名子ノードの衝突テスト（新規）
+// 同名子ノードの衝突テスト
 // ========================================================================
 
 /// 異なる親の下に同名の子ノードを追加しても衝突しない
 @Test
 def testSceneSameChildNameDifferentParents(): Unit \ Assert =
     let scene = Scene.empty()
-        |> Scene.addNode("frog", tnode(0.0f32, 0.0f32))
-        |> Scene.addNode("turtle", tnode(10.0f32, 0.0f32))
-        |> Scene.addChild("frog", "sprite", tnode(1.0f32, 1.0f32))
-        |> Scene.addChild("turtle", "sprite", tnode(2.0f32, 2.0f32));
-    let frogSprite = Scene.getAt("frog" :: "sprite" :: Nil, scene);
-    let turtleSprite = Scene.getAt("turtle" :: "sprite" :: Nil, scene);
+        |> Scene.addNode("frog", tmarker(0.0f32, 0.0f32), TState.TState)
+        |> Scene.addNode("turtle", tmarker(10.0f32, 0.0f32), TState.TState)
+        |> Scene.addChild("frog", "sprite", tmarker(1.0f32, 1.0f32), TState.TState)
+        |> Scene.addChild("turtle", "sprite", tmarker(2.0f32, 2.0f32), TState.TState);
+    let frogPos = Scene.globalPositionAt("frog" :: "sprite" :: Nil, scene);
+    let turtlePos = Scene.globalPositionAt("turtle" :: "sprite" :: Nil, scene);
     Assert.assertEq(
-        expected = (Some(tnode(1.0f32, 1.0f32)), Some(tnode(2.0f32, 2.0f32))),
-        (frogSprite, turtleSprite)
+        expected = (1.0f32, 1.0f32, 12.0f32, 2.0f32),
+        (frogPos#x, frogPos#y, turtlePos#x, turtlePos#y)
     )

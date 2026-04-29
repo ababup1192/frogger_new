@@ -5,42 +5,34 @@
 ///   addNode → ready → [毎フレーム] process(delta)
 ///
 /// 全メソッドにデフォルト実装があり、必要なものだけオーバーライドすればよい。
-pub trait Node[n] {
-
-    // ── Scene アクセス ──
-
-    /// シーンからパスで自分を取得する
-    pub def getSelf(path: NodePath, scene: Scene[n]): Option[n] =
-            Scene.getAt(path, scene)
-
-    /// シーンにパスで自分の状態を書き戻す
-    pub def setSelf(path: NodePath, self: n, scene: Scene[n]): Scene[n] =
-            Scene.setAt(path, self, scene)
+/// 型パラメータ s はゲーム固有の状態を表す。
+/// エンジンノード (EngineNode) は SceneEntry 内に別途保持される。
+pub trait Node[s] {
 
     // ── ライフサイクル ──
 
     /// シーン構築後に一度だけ呼ばれる初期化コールバック
     /// 他ノードへの参照取得や初期状態の計算に使う
-    pub def ready(self: n, _path: NodePath, scene: Scene[n]): (n, Scene[n]) =
-            (self, scene)
+    pub def ready(state: s, engineNode: EngineNode, _path: NodePath, scene: Scene[s]): (s, EngineNode, Scene[s]) =
+            (state, engineNode, scene)
 
     /// 毎フレーム呼ばれる更新コールバック
     /// delta: 前フレームからの経過秒数（Float64）
-    pub def process(_delta: Float64, self: n, _path: NodePath, scene: Scene[n]): (n, Scene[n]) =
-            (self, scene)
+    pub def process(_delta: Float64, state: s, engineNode: EngineNode, _path: NodePath, scene: Scene[s]): (s, EngineNode, Scene[s]) =
+            (state, engineNode, scene)
 
     // ── タイムアウト検出 ──
 
     /// timeout イベントが保留中か
-    pub def isTimedOut(_self: n): Bool = false
+    pub def isTimedOut(_state: s): Bool = false
 
     /// timeout フラグをクリア
-    pub def clearTimedOut(self: n): n = self
+    pub def clearTimedOut(state: s): s = state
 
     // ── ポーズ制御 ──
 
     /// このノードの ProcessMode を返す（デフォルト: Pausable）
     /// Scene.processAll がポーズ中に呼ぶかどうかの判定に使われる
-    pub def getProcessMode(_self: n): ProcessMode =
+    pub def getProcessMode(_state: s): ProcessMode =
             ProcessMode.Pausable
 }
