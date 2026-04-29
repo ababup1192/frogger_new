@@ -34,52 +34,6 @@ def main(): Unit \ IO =
         };
         LwjglLayer.withLwjgl(config, () -> {
             let fontAtlas = Engine.Game.getFontAtlas("default");
-            gameLoop(fontAtlas, Game.initGameState(fontAtlas))
+            Game.start(fontAtlas)
         })
-    }
-
-/// メインループ: 入力 → process → プラットフォーム乗り → ホーム判定 → 死亡判定 → タイマー → HUD
-def gameLoop(fontAtlas: FontAtlas, state: Game.GameState): Unit \ Engine.Game =
-    if (Engine.Game.shouldClose()) ()
-    else {
-        let dt = Engine.Game.getDeltaTime();
-        let currKeys = Game.collectPressedKeys();
-        if (Set.memberOf(Engine.Key.Escape, currKeys)) ()
-        else {
-            let justPressed = Game.justPressedKeys(currKeys, state#prevKeys);
-            // ゲームオーバーまたは勝利時は Enter でリスタート
-            if ((Game.isGameOver(state) or Game.allHomesFilled(state#scene))
-                and Set.memberOf(Engine.Key.Enter, justPressed))
-                gameLoop(fontAtlas, Game.resetGame(fontAtlas))
-            else if (Game.isGameOver(state) or Game.allHomesFilled(state#scene)) {
-                // ゲーム停止中もシーンは描画する
-                let (newScene, newOverlaps) =
-                    GameEngine.updateWithAreaHandler(dt, true, state#prevOverlaps, state#scene);
-                let finalState = {scene = newScene, prevKeys = currKeys, prevOverlaps = newOverlaps | state}
-                    |> Game.updateHUD;
-                gameLoop(fontAtlas, finalState)
-            } else if (state#isDead) {
-                // 死亡中: 入力を無視し、シーンは動かし続ける（車両・丸太は移動）
-                let (newScene, newOverlaps) =
-                    GameEngine.updateWithAreaHandler(dt, false, state#prevOverlaps, state#scene);
-                let finalState = {scene = newScene, prevKeys = currKeys, prevOverlaps = newOverlaps | state}
-                    |> Game.applyTimeouts
-                    |> Game.updateHUD;
-                gameLoop(fontAtlas, finalState)
-            } else {
-                // 通常プレイ
-                let inputState = state
-                    |> Game.applyInput(Game.inputDirection(justPressed));
-                let (newScene, newOverlaps) =
-                    GameEngine.updateWithAreaHandler(dt, false, inputState#prevOverlaps, inputState#scene);
-                let finalState = {scene = newScene, prevKeys = currKeys, prevOverlaps = newOverlaps | inputState}
-                    |> Game.applyPlatformRiding(dt)
-                    |> Game.tryFillHomeSlot
-                    |> Game.checkDeath
-                    |> Game.checkDrown
-                    |> Game.applyTimeouts
-                    |> Game.updateHUD;
-                gameLoop(fontAtlas, finalState)
-            }
-        }
     }

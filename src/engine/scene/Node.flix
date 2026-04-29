@@ -26,8 +26,8 @@ pub trait Node[n] {
 
     /// 毎フレーム呼ばれる更新コールバック
     /// delta: 前フレームからの経過秒数（Float64）
-    pub def process(_delta: Float64, self: n, _path: NodePath, scene: Scene[n]): (n, Scene[n]) =
-            (self, scene)
+    pub def process(_delta: Float64, self: n, _path: NodePath, scene: Scene[n]): (n, Scene[n]) \ Engine.Game =
+            checked_ecast((self, scene))
 
     // ── タイムアウト検出 ──
 

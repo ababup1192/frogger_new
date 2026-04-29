@@ -24,13 +24,13 @@ mod GameEngine {
     /// processAndEmitHandled → render
     ///
     /// OnAreaEvent ハンドラ不要。ノード型の AreaHandler instance で衝突応答する。
-    /// prevOverlaps に前フレームのペアセットを渡すと、離脱イベントも発火される。
-    pub def updateWithAreaHandler(delta: Float32, paused: Bool, prevOverlaps: OverlapPairSet,
-                                  scene: Scene[n]): (Scene[n], OverlapPairSet) \ Engine.Game
+    /// Scene 内の prevOverlaps を使って離脱イベントも発火される。
+    pub def updateWithAreaHandler(delta: Float32, paused: Bool,
+                                  scene: Scene[n]): Scene[n] \ Engine.Game
             with Node[n], CollisionObject2D[n], AreaHandler[n], Engine.Renderable[n] =
-        let (processedScene, currentOverlaps) = AreaEvent.processAndEmitHandled(Float32.toFloat64(delta), paused, prevOverlaps, scene);
+        let processedScene = AreaEvent.processAndEmitHandled(Float32.toFloat64(delta), paused, scene);
         render(processedScene);
-        (processedScene, currentOverlaps)
+        processedScene
 
     /// 描画: Scene.toDrawables で Drawable リストを取得し、描画する
     pub def render(scene: Scene[n]): Unit \ Engine.Game

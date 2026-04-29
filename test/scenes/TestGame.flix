@@ -4,6 +4,15 @@
 // テスト用ヘルパー
 // ========================================================================
 
+def withMockEngine(f: Unit -> a \ ef + Engine.Game): a \ ef =
+    run f() with handler Engine.Game {
+        def render(_, k) = k(())
+        def shouldClose(k) = k(false)
+        def getDeltaTime(k) = k(0.016f32)
+        def isKeyPressed(_, k) = k(false)
+        def getFontAtlas(_, k) = k(testFontAtlas())
+    }
+
 /// テスト用のダミー FontAtlas（空のグリフマップ）
 def testFontAtlas(): FontAtlas = {
     textureName = "font_test",
@@ -19,16 +28,16 @@ def testFontAtlas(): FontAtlas = {
 /// ノード合計
 ///   背景5 + ホーム5(+sprites=10) + プレイヤー1(+Sprite+Hitbox=3)
 ///   + playerTarget1 + 車両15(+sprite=30) + 丸太12(+sprites=46) + 亀5(+sprites=22)
-///   + gameTimer1 + deathTimer1 + timerLabel1 + livesLabel1 = 121
+///   + gameTimer1 + deathTimer1 + timerLabel1 + livesLabel1 + gameManager1 = 122
 @Test
 def testBuildSceneNodeCount(): Unit \ Assert =
-    Assert.assertEq(expected = 121, Scene.nodeCount(Game.buildScene(testFontAtlas())))
+    Assert.assertEq(expected = 122, Scene.nodeCount(Game.buildScene(testFontAtlas())))
 
 /// ルートノード = 背景5 + ホーム5 + プレイヤー1 + playerTarget1 + 車両15 + 丸太12 + 亀5
-///   + gameTimer1 + deathTimer1 + timerLabel1 + livesLabel1 = 48
+///   + gameTimer1 + deathTimer1 + timerLabel1 + livesLabel1 + gameManager1 = 49
 @Test
 def testBuildSceneRootCount(): Unit \ Assert =
-    Assert.assertEq(expected = 48, Map.size(Scene.nodes(Game.buildScene(testFontAtlas()))))
+    Assert.assertEq(expected = 49, Map.size(Scene.nodes(Game.buildScene(testFontAtlas()))))
 
 // ========================================================================
 // buildScene: プレイヤー構成 (CharacterBody2D + AnimatedSprite2D + Hitbox)
@@ -153,22 +162,22 @@ def vecToTuple(v: Vec2.Vec2): (Float32, Float32) = (v#x, v#y)
 ///   moveSpeed=512, dt=0.1 → 51.2px 移動。832-51.2=780.8
 @Test
 def testPlayerProcessMovesTowardTarget(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     // ターゲットを上に設定
     let scene1 = Scene.mapAt("playerTarget" :: Nil, node -> match node {
         case GameNode.Marker2DNode(m) =>
             GameNode.Marker2DNode(Node2D.setPosition({x = 384.0f32, y = 768.0f32}, m))
         case other => other
-    }, state#scene);
-    let processed = Scene.processAll(0.1, false, scene1);
+    }, state);
+    let processed = withMockEngine(() -> Scene.processAll(0.1, false, scene1));
     let pos = Scene.globalPosition("player", processed);
     Assert.assertEq(expected = (384.0f32, 780.8f32), vecToTuple(pos))
 
 /// ターゲットが現在位置と同じ場合、移動しない
 @Test
 def testPlayerProcessStaysAtTarget(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
-    let processed = Scene.processAll(0.1, false, state#scene);
+    let state = Game.buildScene(testFontAtlas());
+    let processed = withMockEngine(() -> Scene.processAll(0.1, false, state));
     let pos = Scene.globalPosition("player", processed);
     Assert.assertEq(expected = (384.0f32, 832.0f32), vecToTuple(pos))
 
@@ -179,8 +188,8 @@ def testPlayerProcessStaysAtTarget(): Unit \ Assert =
 /// fps=4 で 0.3 秒後（frameDuration=0.25 超過）にフレームが 1 に進む
 @Test
 def testAnimSpriteAdvancesFrame(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
-    let processed = Scene.processAll(0.3, false, state#scene);
+    let state = Game.buildScene(testFontAtlas());
+    let processed = withMockEngine(() -> Scene.processAll(0.3, false, state));
     match Scene.getAt("player" :: "Sprite" :: Nil, processed) {
         case Some(GameNode.AnimSpriteNode(sprite)) =>
             Assert.assertEq(expected = "FroggerLeap", AnimatedSprite2D.currentTexture(sprite))
@@ -196,7 +205,7 @@ def testAnimSpriteAdvancesFrame(): Unit \ Assert =
 def testVehicleProcessMoves(): Unit \ Assert =
     let scene = Game.buildScene(testFontAtlas());
     let origPos = Scene.globalPosition("v0_0", scene);
-    let processed = Scene.processAll(0.1, false, scene);
+    let processed = withMockEngine(() -> Scene.processAll(0.1, false, scene));
     let newPos = Scene.globalPosition("v0_0", processed);
     Assert.assertEq(
         expected = (origPos#x - 20.0f32, origPos#y),
@@ -207,7 +216,7 @@ def testVehicleProcessMoves(): Unit \ Assert =
 def testVehicleWrapsLeft(): Unit \ Assert =
     let scene = Game.buildScene(testFontAtlas())
         |> Scene.setGlobalPosition("v0_0", {x = -99.0f32, y = 512.0f32});
-    let processed = Scene.processAll(0.1, false, scene);
+    let processed = withMockEngine(() -> Scene.processAll(0.1, false, scene));
     let newPos = Scene.globalPosition("v0_0", processed);
     Assert.assertEq(expected = Game.screenW() + 100.0f32, newPos#x)
 
@@ -221,7 +230,7 @@ def testLogProcessMoves(): Unit \ Assert =
     let scene = Game.buildScene(testFontAtlas());
     let origPos = Scene.globalPosition("l0_0", scene);
     // Lane 0: vx=120, dt=0.1 → +12px
-    let processed = Scene.processAll(0.1, false, scene);
+    let processed = withMockEngine(() -> Scene.processAll(0.1, false, scene));
     let newPos = Scene.globalPosition("l0_0", processed);
     Assert.assertEq(
         expected = (origPos#x + 12.0f32, origPos#y),
@@ -265,42 +274,11 @@ def testTurtleProcessMoves(): Unit \ Assert =
     let scene = Game.buildScene(testFontAtlas());
     let origPos = Scene.globalPosition("t0_0", scene);
     // Lane 0: vx=100, dt=0.1 → +10px
-    let processed = Scene.processAll(0.1, false, scene);
+    let processed = withMockEngine(() -> Scene.processAll(0.1, false, scene));
     let newPos = Scene.globalPosition("t0_0", processed);
     Assert.assertEq(
         expected = (origPos#x + 10.0f32, origPos#y),
         (newPos#x, newPos#y))
-
-// ========================================================================
-// applyInput: ターゲット更新
-// ========================================================================
-
-/// 上方向入力でターゲットが 64px 上に移動する
-///   初期: (384, 832) → (384, 768)
-@Test
-def testApplyInputUp(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
-    let newState = Game.applyInput(Some(Vec2.up()), state);
-    let target = Game.getPlayerTarget(newState#scene);
-    Assert.assertEq(expected = (384.0f32, 768.0f32), vecToTuple(target))
-
-/// 下方向は 832 でクランプされ移動しない
-@Test
-def testApplyInputClampDown(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
-    let newState = Game.applyInput(Some(Vec2.down()), state);
-    let target = Game.getPlayerTarget(newState#scene);
-    Assert.assertEq(expected = (384.0f32, 832.0f32), vecToTuple(target))
-
-/// None 入力は状態を変更しない
-@Test
-def testApplyInputNone(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
-    let newState = Game.applyInput(None, state);
-    let target = Game.getPlayerTarget(newState#scene);
-    Assert.assertEq(
-        expected = vecToTuple(Game.playerStart()),
-        vecToTuple(target))
 
 // ========================================================================
 // justPressedKeys: エッジ検出
@@ -385,26 +363,26 @@ def testDirectionToRotationDown(): Unit \ Assert =
 /// スプライトが赤色のとき isDead=true に変わり deathTimer が開始される
 @Test
 def testCheckDeathDetectsRed(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     let redScene = Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
         case GameNode.AnimSpriteNode(sprite) =>
             GameNode.AnimSpriteNode(CanvasItem.setModulate({r = 1.0f32, g = 0.2f32, b = 0.2f32}, sprite))
         case other => other
-    }, state#scene);
-    let deadState = Game.checkDeath({scene = redScene | state});
+    }, state);
+    let deadState = Game.checkDeath(redScene);
     // isDead=true かつ deathTimer が running
-    let timerRunning = match Scene.get("deathTimer", deadState#scene) {
-        case Some(GameNode.TimerNode(timer)) => Timer.isRunning(timer)
+    let timerRunning = match Scene.get("deathTimer", deadState) {
+        case Some(GameNode.TimerNode(r)) => Timer.isRunning(r#timer)
         case _ => false
     };
-    Assert.assertEq(expected = (true, true), (deadState#isDead, timerRunning))
+    Assert.assertEq(expected = (true, true), (Game.getGameManager(deadState)#isDead, timerRunning))
 
 /// 通常色のスプライトでは isDead は変わらない
 @Test
 def testCheckDeathNormalColor(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     let checkedState = Game.checkDeath(state);
-    Assert.assertFalse(checkedState#isDead)
+    Assert.assertFalse(Game.getGameManager(checkedState)#isDead)
 
 // ========================================================================
 // checkDrown: 溺死判定
@@ -415,12 +393,12 @@ def testCheckDeathNormalColor(): Unit \ Assert =
 ///   y=430 は全プラットフォームの Y 範囲外で水ゾーン内 (64 ≤ 430 < 448)
 @Test
 def testCheckDrownInWater(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     let waterPos: Vec2.Vec2 = {x = 384.0f32, y = 430.0f32};
-    let scene1 = Scene.setGlobalPosition("player", waterPos, state#scene)
+    let scene1 = Scene.setGlobalPosition("player", waterPos, state)
         |> Scene.mapAt("player" :: Nil, node -> match node {
             case GameNode.Player(r) =>
-                GameNode.Player({body = Node2D.setPosition(waterPos, r#body)})
+                GameNode.Player({body = Node2D.setPosition(waterPos, r#body) | r})
             case other => other
         })
         |> Scene.mapAt("playerTarget" :: Nil, node -> match node {
@@ -428,15 +406,15 @@ def testCheckDrownInWater(): Unit \ Assert =
                 GameNode.Marker2DNode(Node2D.setPosition(waterPos, m))
             case other => other
         });
-    let drownState = Game.checkDrown({scene = scene1 | state});
-    Assert.assertTrue(drownState#isDead)
+    let drownState = Game.checkDrown(scene1);
+    Assert.assertTrue(Game.getGameManager(drownState)#isDead)
 
 /// 道路ゾーンにいるときは溺死しない
 @Test
 def testCheckDrownNotInWater(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     let checkedState = Game.checkDrown(state);
-    Assert.assertFalse(checkedState#isDead)
+    Assert.assertFalse(Game.getGameManager(checkedState)#isDead)
 
 // ========================================================================
 // buildScene: ホームスロット配置
@@ -483,12 +461,12 @@ def testHomeSlotHasSprite(): Unit \ Assert =
 /// プレイヤーがホームゾーン中央（x=384, y=0）に到達すると home2 が充填される
 @Test
 def testTryFillHomeSlotFills(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     let homePos: Vec2.Vec2 = {x = 384.0f32, y = 0.0f32};
-    let scene1 = state#scene
+    let scene1 = state
         |> Scene.mapAt("player" :: Nil, node -> match node {
             case GameNode.Player(r) =>
-                GameNode.Player({body = Node2D.setPosition(homePos, r#body)})
+                GameNode.Player({body = Node2D.setPosition(homePos, r#body) | r})
             case other => other
         })
         |> Scene.mapAt("playerTarget" :: Nil, node -> match node {
@@ -496,9 +474,9 @@ def testTryFillHomeSlotFills(): Unit \ Assert =
                 GameNode.Marker2DNode(Node2D.setPosition(homePos, m))
             case other => other
         });
-    let filledState = Game.tryFillHomeSlot({scene = scene1 | state});
+    let filledState = Game.tryFillHomeSlot(scene1);
     // home2 が充填されている
-    match Scene.get("home2", filledState#scene) {
+    match Scene.get("home2", filledState) {
         case Some(GameNode.HomeSlot(r)) => Assert.assertTrue(r#filled)
         case _ => bug!("home2 not found")
     }
@@ -506,12 +484,12 @@ def testTryFillHomeSlotFills(): Unit \ Assert =
 /// ホームスロット充填後、プレイヤーがスタート位置にリセットされる
 @Test
 def testTryFillHomeSlotResetsPlayer(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     let homePos: Vec2.Vec2 = {x = 384.0f32, y = 0.0f32};
-    let scene1 = state#scene
+    let scene1 = state
         |> Scene.mapAt("player" :: Nil, node -> match node {
             case GameNode.Player(r) =>
-                GameNode.Player({body = Node2D.setPosition(homePos, r#body)})
+                GameNode.Player({body = Node2D.setPosition(homePos, r#body) | r})
             case other => other
         })
         |> Scene.mapAt("playerTarget" :: Nil, node -> match node {
@@ -519,21 +497,21 @@ def testTryFillHomeSlotResetsPlayer(): Unit \ Assert =
                 GameNode.Marker2DNode(Node2D.setPosition(homePos, m))
             case other => other
         });
-    let filledState = Game.tryFillHomeSlot({scene = scene1 | state});
-    let pos = Scene.globalPosition("player", filledState#scene);
+    let filledState = Game.tryFillHomeSlot(scene1);
+    let pos = Scene.globalPosition("player", filledState);
     Assert.assertEq(expected = (384.0f32, 832.0f32), (pos#x, pos#y))
 
 /// ホームゾーンにいないとき tryFillHomeSlot は何もしない
 @Test
 def testTryFillHomeSlotNoOpInRoad(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     let filledState = Game.tryFillHomeSlot(state);
-    Assert.assertFalse(Game.allHomesFilled(filledState#scene))
+    Assert.assertFalse(Game.allHomesFilled(filledState))
 
 /// 全5スロット充填で allHomesFilled が true を返す
 @Test
 def testAllHomesFilledWin(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     // 全スロットを手動で充填
     let scene1 = List.range(0, 5) |> List.foldLeft((acc, idx) ->
         Scene.mapAt("home${idx}" :: Nil, node -> match node {
@@ -541,7 +519,7 @@ def testAllHomesFilledWin(): Unit \ Assert =
                 GameNode.HomeSlot({filled = true | r})
             case other => other
         }, acc),
-        state#scene);
+        state);
     Assert.assertTrue(Game.allHomesFilled(scene1))
 
 // ========================================================================
@@ -551,60 +529,65 @@ def testAllHomesFilledWin(): Unit \ Assert =
 /// 死亡中に deathTimer の process で timeLeft が減少し、タイムアウト前は isDead のまま
 @Test
 def testApplyTimeoutsDeathTimerNotExpired(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     // deathTimer を手動開始して process で 0.5s 進める
     let scene1 = Scene.mapAt("deathTimer" :: Nil, node -> match node {
-        case GameNode.TimerNode(timer) =>
-            GameNode.TimerNode(Timer.start(timer))
+        case GameNode.TimerNode(r) =>
+            GameNode.TimerNode({timer = Timer.start(r#timer) | r})
         case other => other
-    }, state#scene);
-    let scene2 = Scene.processAll(0.5, false, scene1);
-    let updated = Game.applyTimeouts({isDead = true, scene = scene2 | state});
+    }, state);
+    let scene2 = withMockEngine(() -> Scene.processAll(0.5, false, scene1))
+        |> Game.mapGameManager(r -> {isDead = true | r});
+    let updated = Game.applyTimeouts(scene2);
     // 0.5s 後の timeLeft: 2.0 - 0.5 = 1.5（まだ running、timedOut=false）
-    Assert.assertTrue(updated#isDead)
+    Assert.assertTrue(Game.getGameManager(updated)#isDead)
 
 /// タイマーが 0 以下になるとリスポーンする（isDead=false, ライフ -1）
 @Test
 def testApplyTimeoutsDeathTimerRespawns(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     // deathTimer を手動開始し、大きな dt で process して timedOut=true にする
     let scene1 = Scene.mapAt("deathTimer" :: Nil, node -> match node {
-        case GameNode.TimerNode(timer) =>
-            GameNode.TimerNode(Timer.start(timer))
+        case GameNode.TimerNode(r) =>
+            GameNode.TimerNode({timer = Timer.start(r#timer) | r})
         case other => other
-    }, state#scene);
-    let scene2 = Scene.processAll(2.1, false, scene1);
-    let updated = Game.applyTimeouts({isDead = true, scene = scene2 | state});
+    }, state);
+    let scene2 = withMockEngine(() -> Scene.processAll(2.1, false, scene1))
+        |> Game.mapGameManager(r -> {isDead = true | r});
+    let updated = Game.applyTimeouts(scene2);
+    let gm = Game.getGameManager(updated);
     Assert.assertEq(
         expected = (false, 2),
-        (updated#isDead, updated#lives))
+        (gm#isDead, gm#lives))
 
 /// リスポーン後にプレイヤーがスタート位置に戻る
 @Test
 def testRespawnResetsPosition(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     let scene1 = Scene.mapAt("deathTimer" :: Nil, node -> match node {
-        case GameNode.TimerNode(timer) =>
-            GameNode.TimerNode(Timer.start(timer))
+        case GameNode.TimerNode(r) =>
+            GameNode.TimerNode({timer = Timer.start(r#timer) | r})
         case other => other
-    }, state#scene);
-    let scene2 = Scene.processAll(2.1, false, scene1);
-    let updated = Game.applyTimeouts({isDead = true, scene = scene2 | state});
-    let pos = Scene.globalPosition("player", updated#scene);
+    }, state);
+    let scene2 = withMockEngine(() -> Scene.processAll(2.1, false, scene1))
+        |> Game.mapGameManager(r -> {isDead = true | r});
+    let updated = Game.applyTimeouts(scene2);
+    let pos = Scene.globalPosition("player", updated);
     Assert.assertEq(expected = (384.0f32, 832.0f32), (pos#x, pos#y))
 
 /// リスポーン後にスプライトが idle アニメーションに戻る
 @Test
 def testRespawnResetsAnimation(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     let scene1 = Scene.mapAt("deathTimer" :: Nil, node -> match node {
-        case GameNode.TimerNode(timer) =>
-            GameNode.TimerNode(Timer.start(timer))
+        case GameNode.TimerNode(r) =>
+            GameNode.TimerNode({timer = Timer.start(r#timer) | r})
         case other => other
-    }, state#scene);
-    let scene2 = Scene.processAll(2.1, false, scene1);
-    let updated = Game.applyTimeouts({isDead = true, scene = scene2 | state});
-    match Scene.getAt("player" :: "Sprite" :: Nil, updated#scene) {
+    }, state);
+    let scene2 = withMockEngine(() -> Scene.processAll(2.1, false, scene1))
+        |> Game.mapGameManager(r -> {isDead = true | r});
+    let updated = Game.applyTimeouts(scene2);
+    match Scene.getAt("player" :: "Sprite" :: Nil, updated) {
         case Some(GameNode.AnimSpriteNode(sprite)) =>
             Assert.assertEq(expected = "idle", AnimatedSprite2D.getCurrentAnimation(sprite))
         case _ => bug!("player Sprite not found after respawn")
@@ -613,9 +596,9 @@ def testRespawnResetsAnimation(): Unit \ Assert =
 /// タイマーがタイムアウトしていないときは applyTimeouts は何もしない
 @Test
 def testApplyTimeoutsNoOpWhenNoTimeout(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     let updated = Game.applyTimeouts(state);
-    Assert.assertFalse(updated#isDead)
+    Assert.assertFalse(Game.getGameManager(updated)#isDead)
 
 // ========================================================================
 // applyTimeouts: ゲームタイマー
@@ -624,35 +607,35 @@ def testApplyTimeoutsNoOpWhenNoTimeout(): Unit \ Assert =
 /// ゲームタイマーが process で減少する
 @Test
 def testGameTimerDecreases(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
-    // gameTimer は autostart=true なので readyAll 後は running
-    let scene1 = Scene.readyAll(state#scene);
-    let scene2 = Scene.processAll(1.0, false, scene1);
+    let state = Game.buildScene(testFontAtlas());
+    // gameTimer は autostart=true なので processAll 初回で自動 ready される
+    let scene2 = withMockEngine(() -> Scene.processAll(1.0, false, state));
     match Scene.get("gameTimer", scene2) {
-        case Some(GameNode.TimerNode(timer)) =>
+        case Some(GameNode.TimerNode(r)) =>
             // 30.0 - 1.0 = 29.0
-            Assert.assertEq(expected = 29.0f32, Timer.getTimeLeft(timer))
+            Assert.assertEq(expected = 29.0f32, Timer.getTimeLeft(r#timer))
         case _ => bug!("gameTimer not found")
     }
 
 /// ゲームタイマーが 0 以下になると applyTimeouts で isDead=true になる
 @Test
 def testApplyTimeoutsGameTimerDeath(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     // gameTimer を短い waitTime の Timer に置き換えて開始
     let shortTimer = Timer.make(0.5f32) |> Timer.setAutostart(true) |> Timer.ready;
-    let scene1 = Scene.set("gameTimer", GameNode.TimerNode(shortTimer), state#scene);
-    let scene2 = Scene.processAll(1.0, false, scene1);
-    let updated = Game.applyTimeouts({scene = scene2 | state});
-    Assert.assertTrue(updated#isDead)
+    let scene1 = Scene.set("gameTimer", GameNode.TimerNode({kind = TimerKind.GameTimerKind, timer = shortTimer}), state);
+    let scene2 = withMockEngine(() -> Scene.processAll(1.0, false, scene1));
+    let updated = Game.applyTimeouts(scene2);
+    Assert.assertTrue(Game.getGameManager(updated)#isDead)
 
 /// 既に isDead=true のときゲームタイマーの timedOut は追加死亡しない
 @Test
 def testApplyTimeoutsGameTimerSkipsWhenDead(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
-    let updated = Game.applyTimeouts({isDead = true | state});
+    let state = Game.buildScene(testFontAtlas());
+    let scene1 = Game.mapGameManager(r -> {isDead = true | r}, state);
+    let updated = Game.applyTimeouts(scene1);
     // isDead=true のまま（追加の状態変更なし）
-    Assert.assertTrue(updated#isDead)
+    Assert.assertTrue(Game.getGameManager(updated)#isDead)
 
 // ========================================================================
 // Timer timedOut フラグ
@@ -683,10 +666,10 @@ def testTimerClearTimedOut(): Unit \ Assert =
 /// handleTimeouts 後に timedOut フラグがクリアされる
 @Test
 def testHandleTimeoutsClearsFlag(): Unit \ Assert =
-    let state = Game.initGameState(testFontAtlas());
+    let state = Game.buildScene(testFontAtlas());
     let shortTimer = Timer.make(0.5f32) |> Timer.setAutostart(true) |> Timer.ready;
-    let scene1 = Scene.set("gameTimer", GameNode.TimerNode(shortTimer), state#scene);
-    let scene2 = Scene.processAll(1.0, false, scene1);
+    let scene1 = Scene.set("gameTimer", GameNode.TimerNode({kind = TimerKind.GameTimerKind, timer = shortTimer}), state);
+    let scene2 = withMockEngine(() -> Scene.processAll(1.0, false, scene1));
     // processAll 後は timedOut=true のはず
     let timedOutPaths = TimerEvent.detectTimeoutPaths(scene2);
     let hasGameTimer = List.exists(p -> p == "gameTimer" :: Nil, timedOutPaths);
@@ -696,25 +679,27 @@ def testHandleTimeoutsClearsFlag(): Unit \ Assert =
     Assert.assertEq(expected = (true, Nil), (hasGameTimer, afterPaths))
 
 // ========================================================================
-// isGameOver / resetGame
+// isGameOver
 // ========================================================================
 
 /// ライフ 0 でゲームオーバー
 @Test
 def testIsGameOverTrue(): Unit \ Assert =
-    let state = {lives = 0 | Game.initGameState(testFontAtlas())};
-    Assert.assertTrue(Game.isGameOver(state))
+    let state = Game.buildScene(testFontAtlas());
+    let state1 = Game.mapGameManager(r -> {lives = 0 | r}, state);
+    Assert.assertTrue(Game.isGameOver(state1))
 
 /// ライフ残ありでゲームオーバーではない
 @Test
 def testIsGameOverFalse(): Unit \ Assert =
-    Assert.assertFalse(Game.isGameOver(Game.initGameState(testFontAtlas())))
+    Assert.assertFalse(Game.isGameOver(Game.buildScene(testFontAtlas())))
 
-/// resetGame で初期状態に戻る
+/// buildScene で初期状態が構築される
 @Test
-def testResetGame(): Unit \ Assert =
-    let state = Game.resetGame(testFontAtlas());
-    Assert.assertEq(expected = (3, false), (state#lives, state#isDead))
+def testbuildScene(): Unit \ Assert =
+    let state = Game.buildScene(testFontAtlas());
+    let gm = Game.getGameManager(state);
+    Assert.assertEq(expected = (3, false), (gm#lives, gm#isDead))
 
 // ========================================================================
 // Timer ノードの存在と初期値
@@ -724,8 +709,8 @@ def testResetGame(): Unit \ Assert =
 @Test
 def testGameTimerExists(): Unit \ Assert =
     match Scene.get("gameTimer", Game.buildScene(testFontAtlas())) {
-        case Some(GameNode.TimerNode(timer)) =>
-            Assert.assertEq(expected = 30.0f32, Timer.getTimeLeft(timer))
+        case Some(GameNode.TimerNode(r)) =>
+            Assert.assertEq(expected = 30.0f32, Timer.getTimeLeft(r#timer))
         case _ => bug!("gameTimer not found")
     }
 
@@ -733,8 +718,8 @@ def testGameTimerExists(): Unit \ Assert =
 @Test
 def testDeathTimerExists(): Unit \ Assert =
     match Scene.get("deathTimer", Game.buildScene(testFontAtlas())) {
-        case Some(GameNode.TimerNode(timer)) =>
-            Assert.assertFalse(Timer.isRunning(timer))
+        case Some(GameNode.TimerNode(r)) =>
+            Assert.assertFalse(Timer.isRunning(r#timer))
         case _ => bug!("deathTimer not found")
     }
 
@@ -757,3 +742,60 @@ def testLivesLabelExists(): Unit \ Assert =
         case Some(GameNode.Label2DNode(_)) => Assert.assertTrue(true)
         case _ => bug!("livesLabel not found")
     }
+
+// ========================================================================
+// Player process: 入力統合テスト
+// ========================================================================
+
+/// process 中に W キーが押されるとターゲットが 64px 上に移動する
+@Test
+def testPlayerProcessInputUp(): Unit \ Assert =
+    let state = Game.buildScene(testFontAtlas());
+    let processed = run Scene.processAll(0.1, false, state) with handler Engine.Game {
+        def render(_, k) = k(())
+        def shouldClose(k) = k(false)
+        def getDeltaTime(k) = k(0.016f32)
+        def isKeyPressed(key, k) = k(key == Engine.Key.W)
+        def getFontAtlas(_, k) = k(testFontAtlas())
+    };
+    let target = Game.getPlayerTarget(processed);
+    Assert.assertEq(expected = (384.0f32, 768.0f32), (target#x, target#y))
+
+/// process 中に S キーが押されても下限クランプで移動しない
+@Test
+def testPlayerProcessInputClampDown(): Unit \ Assert =
+    let state = Game.buildScene(testFontAtlas());
+    let processed = run Scene.processAll(0.1, false, state) with handler Engine.Game {
+        def render(_, k) = k(())
+        def shouldClose(k) = k(false)
+        def getDeltaTime(k) = k(0.016f32)
+        def isKeyPressed(key, k) = k(key == Engine.Key.S)
+        def getFontAtlas(_, k) = k(testFontAtlas())
+    };
+    let target = Game.getPlayerTarget(processed);
+    Assert.assertEq(expected = (384.0f32, 832.0f32), (target#x, target#y))
+
+/// process 中にキーが押されていない場合ターゲットは変わらない
+@Test
+def testPlayerProcessInputNone(): Unit \ Assert =
+    let state = Game.buildScene(testFontAtlas());
+    let processed = withMockEngine(() -> Scene.processAll(0.1, false, state));
+    let target = Game.getPlayerTarget(processed);
+    Assert.assertEq(
+        expected = vecToTuple(Game.playerStart()),
+        vecToTuple(target))
+
+/// 死亡中は W キーが押されてもターゲットが変わらない
+@Test
+def testPlayerProcessInputIgnoredWhenDead(): Unit \ Assert =
+    let state = Game.buildScene(testFontAtlas());
+    let deadScene = Game.mapGameManager(r -> {isDead = true | r}, state);
+    let processed = run Scene.processAll(0.1, false, deadScene) with handler Engine.Game {
+        def render(_, k) = k(())
+        def shouldClose(k) = k(false)
+        def getDeltaTime(k) = k(0.016f32)
+        def isKeyPressed(key, k) = k(key == Engine.Key.W)
+        def getFontAtlas(_, k) = k(testFontAtlas())
+    };
+    let target = Game.getPlayerTarget(processed);
+    Assert.assertEq(expected = (384.0f32, 832.0f32), (target#x, target#y))

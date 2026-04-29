@@ -11,7 +11,11 @@ pub enum SceneEntry[n] {
 
 /// シーン: ルートノードのみを Map で保持し、各 SceneEntry が子を再帰的に内包する
 pub enum Scene[n] {
-    case Scene(Map[NodeName, SceneEntry[n]])
+    case Scene({
+        nodes = Map[NodeName, SceneEntry[n]],
+        readied = Bool,
+        prevOverlaps = OverlapPairSet
+    })
 }
 
 pub mod Scene {
@@ -22,8 +26,28 @@ pub mod Scene {
 
     /// Scene のルート Map を取り出す
     def roots(scene: Scene[n]): Map[NodeName, SceneEntry[n]] =
-        let Scene.Scene(m) = scene;
-        m
+        let Scene.Scene(r) = scene;
+        r#nodes
+
+    /// readied フラグを取り出す
+    def isReady(scene: Scene[n]): Bool =
+        let Scene.Scene(r) = scene;
+        r#readied
+
+    /// readied=true でシーンを再構築する
+    def markReady(scene: Scene[n]): Scene[n] =
+        let Scene.Scene(r) = scene;
+        Scene.Scene({ readied = true | r })
+
+    /// 前フレームの重なりペアセットを取り出す
+    pub def getPrevOverlaps(scene: Scene[n]): OverlapPairSet =
+        let Scene.Scene(r) = scene;
+        r#prevOverlaps
+
+    /// 前フレームの重なりペアセットを設定する
+    pub def setPrevOverlaps(overlaps: OverlapPairSet, scene: Scene[n]): Scene[n] =
+        let Scene.Scene(r) = scene;
+        Scene.Scene({ prevOverlaps = overlaps | r })
 
     /// SceneEntry のノードを取り出す
     def entryNode(entry: SceneEntry[n]): n =
@@ -82,11 +106,12 @@ pub mod Scene {
         match path {
             case Nil => scene
             case rootName :: rest =>
-                match Map.get(rootName, roots(scene)) {
+                let Scene.Scene(r) = scene;
+                match Map.get(rootName, r#nodes) {
                     case None => scene
                     case Some(rootEntry) =>
                         let updated = modifyEntryIn(rest, f, rootEntry);
-                        Scene.Scene(Map.insert(rootName, updated, roots(scene)))
+                        Scene.Scene({ nodes = Map.insert(rootName, updated, r#nodes) | r })
                 }
         }
 
@@ -112,12 +137,13 @@ pub mod Scene {
 
     /// 空のシーンを返す
     pub def empty(): Scene[n] =
-        Scene.Scene(Map.empty())
+        Scene.Scene({ nodes = Map.empty(), readied = false, prevOverlaps = Set.empty() })
 
     /// ルートノードとして追加する
     pub def addNode(name: NodeName, node: n, scene: Scene[n]): Scene[n] =
+        let Scene.Scene(r) = scene;
         let entry = SceneEntry.SceneEntry({ node = node, children = Map.empty() });
-        Scene.Scene(Map.insert(name, entry, roots(scene)))
+        Scene.Scene({ nodes = Map.insert(name, entry, r#nodes) | r })
 
     /// 親がルートの子追加（既存互換）
     pub def addChild(parentName: NodeName, childName: NodeName, node: n, scene: Scene[n]): Scene[n] =
@@ -163,10 +189,11 @@ pub mod Scene {
 
     /// パスで削除
     pub def removeAt(path: NodePath, scene: Scene[n]): Scene[n] =
+        let Scene.Scene(sr) = scene;
         match List.reverse(path) {
             case Nil => scene
             case childName :: Nil =>
-                Scene.Scene(Map.remove(childName, roots(scene)))
+                Scene.Scene({ nodes = Map.remove(childName, sr#nodes) | sr })
             case childName :: parentRev =>
                 modifyAt(List.reverse(parentRev), entry ->
                     let SceneEntry.SceneEntry(r) = entry;
@@ -305,8 +332,8 @@ pub mod Scene {
     // ========================================================================
 
     /// 全ノードを preorder で走査し、変換関数を順次適用する（Region で状態をスレッドする）
-    def foldNodes(f: (n, NodePath, Scene[n]) -> (n, Scene[n]),
-                  scene: Scene[n]): Scene[n] =
+    def foldNodes(f: (n, NodePath, Scene[n]) -> (n, Scene[n]) \ ef,
+                  scene: Scene[n]): Scene[n] \ ef =
         let paths = preorderPaths(scene);
         region rc {
             let sceneRef = Ref.fresh(rc, scene);
@@ -321,18 +348,21 @@ pub mod Scene {
             Ref.get(sceneRef)
         }
 
-    /// 全ノードの ready を preorder（親→子）の順で呼び出す
-    pub def readyAll(scene: Scene[n]): Scene[n] with Node[n] =
+    /// 全ノードの ready を preorder（親→子）の順で呼び出し、readied フラグを立てる
+    def readyAll(scene: Scene[n]): Scene[n] with Node[n] =
         foldNodes((node, path, sc) -> Node.ready(node, path, sc), scene)
+            |> markReady
 
     /// 全ノードの process を preorder（親→子）の順で呼び出す
-    pub def processAll(delta: Float64, paused: Bool, scene: Scene[n]): Scene[n] with Node[n] =
+    /// 初回呼び出し時は自動で readyAll を実行する
+    pub def processAll(delta: Float64, paused: Bool, scene: Scene[n]): Scene[n] \ Engine.Game with Node[n] =
+        let scene1 = if (not isReady(scene)) readyAll(scene) else scene;
         foldNodes((node, path, sc) ->
             if (ProcessMode.shouldProcess(paused, Node.getProcessMode(node)))
                 Node.process(delta, node, path, sc)
             else
                 (node, sc),
-            scene)
+            scene1)
 
     // ========================================================================
     // 描画

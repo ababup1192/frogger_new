@@ -351,25 +351,25 @@ def testSceneNodeCount(): Unit \ Assert =
     Assert.assertEq(expected = 3, Scene.nodeCount(scene))
 
 // ========================================================================
-// readyAll / processAll（preorder 順で実行される）
+// processAll（初回で自動 ready → preorder 順で実行される）
 // ========================================================================
 
-/// readyAll はエラーなく全ノードを走査できる
-@Test
-def testSceneReadyAll(): Unit \ Assert =
-    let scene = Scene.empty()
-        |> Scene.addNode("root", tnode(0.0f32, 0.0f32))
-        |> Scene.addChild("root", "a", tnode(1.0f32, 0.0f32))
-        |> Scene.readyAll;
-    Assert.assertEq(expected = Some(tnode(1.0f32, 0.0f32)), Scene.getAt("root" :: "a" :: Nil, scene))
-
-/// processAll はエラーなく全ノードを走査できる
+/// processAll は初回呼び出しで自動 ready し、エラーなく全ノードを走査できる
 @Test
 def testSceneProcessAll(): Unit \ Assert =
     let scene = Scene.empty()
         |> Scene.addNode("root", tnode(0.0f32, 0.0f32))
         |> Scene.addChild("root", "a", tnode(1.0f32, 0.0f32))
-        |> Scene.processAll(0.016f64, false);
+        |> (sc -> run Scene.processAll(0.016f64, false, sc) with handler Engine.Game {
+            def render(_, k) = k(())
+            def shouldClose(k) = k(false)
+            def getDeltaTime(k) = k(0.016f32)
+            def isKeyPressed(_, k) = k(false)
+            def getFontAtlas(_, k) = k({
+                textureName = "test", fontSize = 32.0f32,
+                textureSize = 512.0f32, glyphs = Map.empty()
+            })
+        });
     Assert.assertEq(expected = Some(tnode(1.0f32, 0.0f32)), Scene.getAt("root" :: "a" :: Nil, scene))
 
 // ========================================================================
