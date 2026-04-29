@@ -1,11 +1,18 @@
 // Game — Frogger ゲーム専用の GameNode 定義とシーン構築・ゲームロジック
 
+pub enum GamePhase with Eq, ToString {
+    case Playing
+    case Dying
+    case GameOver
+    case Win
+}
+
 pub type alias GameState = {
     scene = Scene[GameNode],
     gameTimer = Timer,
     deathTimer = Timer,
     lives = Int32,
-    isDead = Bool
+    phase = GamePhase
 }
 
 pub enum GameNode {
@@ -210,7 +217,7 @@ mod Game {
             gameTimer = Timer.make(30.0f32) |> Timer.setAutostart(true) |> Timer.ready,
             deathTimer = Timer.make(2.0f32),
             lives = 3,
-            isDead = false
+            phase = GamePhase.Playing
         }
 
     // ========================================================================
@@ -575,7 +582,8 @@ mod Game {
                             case other => other
                         })
                         |> resetPlayerPosition;
-                    { scene = newScene, gameTimer = Timer.start(state#gameTimer) | state }
+                    let newPhase = if (allHomesFilled(newScene)) GamePhase.Win else state#phase;
+                    { scene = newScene, gameTimer = Timer.start(state#gameTimer), phase = newPhase | state }
             }
         }
 
@@ -641,7 +649,7 @@ mod Game {
         match Scene.get("player", state#scene) {
             case Some(GameNode.Player(r)) =>
                 let currKeys = collectPressedKeys();
-                if (state#isDead) {
+                if (state#phase != GamePhase.Playing) {
                     let newScene = Scene.mapAt("player" :: Nil, node -> match node {
                         case GameNode.Player(pr) => GameNode.Player({prevKeys = currKeys | pr})
                         case other => other
@@ -731,10 +739,10 @@ mod Game {
     // 死亡判定
     // ========================================================================
 
-    /// 死亡演出を開始する（アニメーション変更 + deathTimer 開始 + isDead フラグ設定）
+    /// 死亡演出を開始する（アニメーション変更 + deathTimer 開始 + phase を Dying に遷移）
     pub def triggerDeath(color: Color, state: GameState): GameState =
         let newScene = playDeathAnim(color, state#scene);
-        { scene = newScene, deathTimer = Timer.start(state#deathTimer), isDead = true | state }
+        { scene = newScene, deathTimer = Timer.start(state#deathTimer), phase = GamePhase.Dying | state }
 
     pub def playDeathAnim(color: Color, scene: Scene[GameNode]): Scene[GameNode] =
         Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
@@ -750,7 +758,7 @@ mod Game {
         match Scene.getAt("player" :: "Sprite" :: Nil, state#scene) {
             case Some(GameNode.AnimSpriteNode(sprite)) =>
                 let color = CanvasItem.getModulate(sprite);
-                if (color#g < 0.5f32 and not state#isDead)
+                if (color#g < 0.5f32 and state#phase == GamePhase.Playing)
                     triggerDeath({r = 1.0f32, g = 0.2f32, b = 0.2f32}, state)
                 else
                     state
@@ -758,7 +766,7 @@ mod Game {
         }
 
     pub def checkDrown(state: GameState): GameState =
-        if (state#isDead) state
+        if (state#phase != GamePhase.Playing) state
         else {
             let target = getPlayerTarget(state#scene);
             let playerPos = Scene.globalPosition("player", state#scene);
@@ -797,11 +805,12 @@ mod Game {
         let state1 = if (Timer.isTimedOut(state#gameTimer)) {
             let cleared = { gameTimer = Timer.clearTimedOut(state#gameTimer) | state };
             if (Timer.isRunning(state#deathTimer)) cleared
-            else if (state#isDead) cleared
+            else if (state#phase != GamePhase.Playing) cleared
             else triggerDeath({r = 1.0f32, g = 1.0f32, b = 0.2f32}, cleared)
         } else state;
         // deathTimer タイムアウト: リスポーン + lives-1
         if (Timer.isTimedOut(state1#deathTimer)) {
+            let newLives = state1#lives - 1;
             let newScene = resetPlayerPosition(state1#scene)
                 |> Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
                     case GameNode.AnimSpriteNode(sprite) =>
@@ -812,15 +821,13 @@ mod Game {
                                 |> Node2D.setRotation(0.0))
                     case other => other
                 });
+            let newPhase = if (newLives <= 0) GamePhase.GameOver else GamePhase.Playing;
             { scene = newScene,
               deathTimer = Timer.clearTimedOut(state1#deathTimer),
               gameTimer = Timer.start(state1#gameTimer),
-              isDead = false,
-              lives = state1#lives - 1 }
+              phase = newPhase,
+              lives = newLives }
         } else state1
-
-    pub def isGameOver(state: GameState): Bool =
-        state#lives <= 0
 
 
     // ========================================================================
@@ -855,33 +862,40 @@ mod Game {
         else if (Engine.Game.isKeyPressed(Engine.Key.Escape)) ()
         else {
             let dt = Engine.Game.getDeltaTime();
-            if ((isGameOver(state) or allHomesFilled(state#scene))
-                and Engine.Game.isKeyPressed(Engine.Key.Enter))
-                gameLoop(fontAtlas, buildState(fontAtlas))
-            else if (isGameOver(state) or allHomesFilled(state#scene)) {
-                let newScene = GameEngine.updateWithAreaHandler(dt, true, state#scene);
-                let finalState = { scene = newScene | state }
-                    |> updateHUD;
-                gameLoop(fontAtlas, finalState)
-            } else if (state#isDead) {
-                let newScene = GameEngine.updateWithAreaHandler(dt, false, state#scene);
-                let finalState = { scene = newScene | state }
-                    |> processTimers(dt)
-                    |> handleTimerTimeouts
-                    |> updateHUD;
-                gameLoop(fontAtlas, finalState)
-            } else {
-                let newScene = GameEngine.updateWithAreaHandler(dt, false, state#scene);
-                let finalState = { scene = newScene | state }
-                    |> handlePlayerInput
-                    |> processTimers(dt)
-                    |> applyPlatformRiding(dt)
-                    |> tryFillHomeSlot
-                    |> checkDeath
-                    |> checkDrown
-                    |> handleTimerTimeouts
-                    |> updateHUD;
-                gameLoop(fontAtlas, finalState)
+            match state#phase {
+                case GamePhase.Playing =>
+                    let newScene = GameEngine.updateWithAreaHandler(dt, false, state#scene);
+                    let finalState = { scene = newScene | state }
+                        |> handlePlayerInput
+                        |> processTimers(dt)
+                        |> applyPlatformRiding(dt)
+                        |> tryFillHomeSlot
+                        |> checkDeath
+                        |> checkDrown
+                        |> handleTimerTimeouts
+                        |> updateHUD;
+                    gameLoop(fontAtlas, finalState)
+                case GamePhase.Dying =>
+                    let newScene = GameEngine.updateWithAreaHandler(dt, false, state#scene);
+                    let finalState = { scene = newScene | state }
+                        |> processTimers(dt)
+                        |> handleTimerTimeouts
+                        |> updateHUD;
+                    gameLoop(fontAtlas, finalState)
+                case GamePhase.GameOver =>
+                    if (Engine.Game.isKeyPressed(Engine.Key.Enter))
+                        gameLoop(fontAtlas, buildState(fontAtlas))
+                    else {
+                        let newScene = GameEngine.updateWithAreaHandler(dt, true, state#scene);
+                        gameLoop(fontAtlas, { scene = newScene | state } |> updateHUD)
+                    }
+                case GamePhase.Win =>
+                    if (Engine.Game.isKeyPressed(Engine.Key.Enter))
+                        gameLoop(fontAtlas, buildState(fontAtlas))
+                    else {
+                        let newScene = GameEngine.updateWithAreaHandler(dt, true, state#scene);
+                        gameLoop(fontAtlas, { scene = newScene | state } |> updateHUD)
+                    }
             }
         }
 

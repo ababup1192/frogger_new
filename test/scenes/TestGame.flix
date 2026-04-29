@@ -366,7 +366,7 @@ def testDirectionToRotationDown(): Unit \ Assert =
 // checkDeath: 衝突死亡判定
 // ========================================================================
 
-/// スプライトが赤色のとき isDead=true に変わり deathTimer が開始される
+/// スプライトが赤色のとき phase=Dying に変わり deathTimer が開始される
 @Test
 def testCheckDeathDetectsRed(): Unit \ Assert =
     let state = testState();
@@ -376,14 +376,14 @@ def testCheckDeathDetectsRed(): Unit \ Assert =
         case other => other
     }, state#scene);
     let deadState = Game.checkDeath({ scene = redScene | state });
-    Assert.assertEq(expected = (true, true), (deadState#isDead, Timer.isRunning(deadState#deathTimer)))
+    Assert.assertEq(expected = (GamePhase.Dying, true), (deadState#phase, Timer.isRunning(deadState#deathTimer)))
 
-/// 通常色のスプライトでは isDead は変わらない
+/// 通常色のスプライトでは phase は Playing のまま
 @Test
 def testCheckDeathNormalColor(): Unit \ Assert =
     let state = testState();
     let checkedState = Game.checkDeath(state);
-    Assert.assertFalse(checkedState#isDead)
+    Assert.assertEq(expected = GamePhase.Playing, checkedState#phase)
 
 // ========================================================================
 // checkDrown: 溺死判定
@@ -401,14 +401,14 @@ def testCheckDrownInWater(): Unit \ Assert =
             case other => other
         });
     let drownState = Game.checkDrown({ scene = newScene | state });
-    Assert.assertTrue(drownState#isDead)
+    Assert.assertEq(expected = GamePhase.Dying, drownState#phase)
 
 /// 道路ゾーンにいるときは溺死しない
 @Test
 def testCheckDrownNotInWater(): Unit \ Assert =
     let state = testState();
     let checkedState = Game.checkDrown(state);
-    Assert.assertFalse(checkedState#isDead)
+    Assert.assertEq(expected = GamePhase.Playing, checkedState#phase)
 
 // ========================================================================
 // buildState: ホームスロット配置
@@ -503,36 +503,59 @@ def testAllHomesFilledWin(): Unit \ Assert =
         scene);
     Assert.assertTrue(Game.allHomesFilled(scene1))
 
+/// 最後のスロット充填時に tryFillHomeSlot が phase を Win に遷移させる
+@Test
+def testTryFillHomeSlotWinTransition(): Unit \ Assert =
+    let state = testState();
+    // 先に 4 スロットを充填
+    let scene1 = List.range(0, 4) |> List.foldLeft((acc, idx) ->
+        Scene.mapAt("home${idx}" :: Nil, node -> match node {
+            case GameNode.HomeSlot(r) =>
+                GameNode.HomeSlot({filled = true | r})
+            case other => other
+        }, acc),
+        state#scene);
+    // 最後のスロット (home4, x=704) にプレイヤーを配置
+    let homePos: Vec2.Vec2 = {x = 704.0f32, y = 0.0f32};
+    let scene2 = scene1
+        |> Scene.mapAt("player" :: Nil, node -> match node {
+            case GameNode.Player(r) =>
+                GameNode.Player({body = Node2D.setPosition(homePos, r#body), target = homePos | r})
+            case other => other
+        });
+    let filledState = Game.tryFillHomeSlot({ scene = scene2 | state });
+    Assert.assertEq(expected = GamePhase.Win, filledState#phase)
+
 // ========================================================================
 // handleTimerTimeouts: 死亡タイマーとリスポーン
 // ========================================================================
 
-/// 死亡中に deathTimer の process で timeLeft が減少し、タイムアウト前は isDead のまま
+/// 死亡中に deathTimer の process で timeLeft が減少し、タイムアウト前は Dying のまま
 @Test
 def testHandleTimerTimeoutsDeathTimerNotExpired(): Unit \ Assert =
     let state = testState();
     // deathTimer を手動開始して 0.5s 進める
-    let state1 = { deathTimer = Timer.start(state#deathTimer), isDead = true | state };
+    let state1 = { deathTimer = Timer.start(state#deathTimer), phase = GamePhase.Dying | state };
     let state2 = Game.processTimers(0.5f32, state1);
     let updated = Game.handleTimerTimeouts(state2);
-    Assert.assertTrue(updated#isDead)
+    Assert.assertEq(expected = GamePhase.Dying, updated#phase)
 
-/// タイマーが 0 以下になるとリスポーンする（isDead=false, ライフ -1）
+/// タイマーが 0 以下になるとリスポーンする（phase=Playing, ライフ -1）
 @Test
 def testHandleTimerTimeoutsDeathTimerRespawns(): Unit \ Assert =
     let state = testState();
-    let state1 = { deathTimer = Timer.start(state#deathTimer), isDead = true | state };
+    let state1 = { deathTimer = Timer.start(state#deathTimer), phase = GamePhase.Dying | state };
     let state2 = Game.processTimers(2.1f32, state1);
     let updated = Game.handleTimerTimeouts(state2);
     Assert.assertEq(
-        expected = (false, 2),
-        (updated#isDead, updated#lives))
+        expected = (GamePhase.Playing, 2),
+        (updated#phase, updated#lives))
 
 /// リスポーン後にプレイヤーがスタート位置に戻る
 @Test
 def testRespawnResetsPosition(): Unit \ Assert =
     let state = testState();
-    let state1 = { deathTimer = Timer.start(state#deathTimer), isDead = true | state };
+    let state1 = { deathTimer = Timer.start(state#deathTimer), phase = GamePhase.Dying | state };
     let state2 = Game.processTimers(2.1f32, state1);
     let updated = Game.handleTimerTimeouts(state2);
     let pos = Scene.globalPosition("player", updated#scene);
@@ -542,7 +565,7 @@ def testRespawnResetsPosition(): Unit \ Assert =
 @Test
 def testRespawnResetsAnimation(): Unit \ Assert =
     let state = testState();
-    let state1 = { deathTimer = Timer.start(state#deathTimer), isDead = true | state };
+    let state1 = { deathTimer = Timer.start(state#deathTimer), phase = GamePhase.Dying | state };
     let state2 = Game.processTimers(2.1f32, state1);
     let updated = Game.handleTimerTimeouts(state2);
     match Scene.getAt("player" :: "Sprite" :: Nil, updated#scene) {
@@ -556,7 +579,7 @@ def testRespawnResetsAnimation(): Unit \ Assert =
 def testHandleTimerTimeoutsNoOpWhenNoTimeout(): Unit \ Assert =
     let state = testState();
     let updated = Game.handleTimerTimeouts(state);
-    Assert.assertFalse(updated#isDead)
+    Assert.assertEq(expected = GamePhase.Playing, updated#phase)
 
 // ========================================================================
 // processTimers / handleTimerTimeouts: ゲームタイマー
@@ -569,22 +592,22 @@ def testGameTimerDecreases(): Unit \ Assert =
     let state1 = Game.processTimers(1.0f32, state);
     Assert.assertEq(expected = 29.0f32, Timer.getTimeLeft(state1#gameTimer))
 
-/// ゲームタイマーが 0 以下になると handleTimerTimeouts で isDead=true になる
+/// ゲームタイマーが 0 以下になると handleTimerTimeouts で phase=Dying になる
 @Test
 def testHandleTimerTimeoutsGameTimerDeath(): Unit \ Assert =
     let state = testState();
     let shortState = { gameTimer = Timer.make(0.5f32) |> Timer.setAutostart(true) |> Timer.ready | state };
     let state1 = Game.processTimers(1.0f32, shortState);
     let updated = Game.handleTimerTimeouts(state1);
-    Assert.assertTrue(updated#isDead)
+    Assert.assertEq(expected = GamePhase.Dying, updated#phase)
 
-/// 既に isDead=true のときゲームタイマーの timedOut は追加死亡しない
+/// 既に Dying のときゲームタイマーの timedOut は追加死亡しない
 @Test
 def testHandleTimerTimeoutsGameTimerSkipsWhenDead(): Unit \ Assert =
     let state = testState();
-    let state1 = { isDead = true | state };
+    let state1 = { phase = GamePhase.Dying | state };
     let updated = Game.handleTimerTimeouts(state1);
-    Assert.assertTrue(updated#isDead)
+    Assert.assertEq(expected = GamePhase.Dying, updated#phase)
 
 // ========================================================================
 // Timer timedOut フラグ
@@ -626,25 +649,32 @@ def testHandleTimeoutsClearsFlag(): Unit \ Assert =
     Assert.assertEq(expected = (true, false), (hasTimeout, afterTimeout))
 
 // ========================================================================
-// isGameOver
+// GamePhase 遷移
 // ========================================================================
 
-/// ライフ 0 でゲームオーバー
+/// deathTimer タイムアウト時、ライフ1 → GameOver に遷移
 @Test
-def testIsGameOverTrue(): Unit \ Assert =
+def testDeathTimerTimeoutGameOver(): Unit \ Assert =
     let state = testState();
-    Assert.assertTrue(Game.isGameOver({ lives = 0 | state }))
+    let state1 = { deathTimer = Timer.start(state#deathTimer), phase = GamePhase.Dying, lives = 1 | state };
+    let state2 = Game.processTimers(2.1f32, state1);
+    let updated = Game.handleTimerTimeouts(state2);
+    Assert.assertEq(expected = GamePhase.GameOver, updated#phase)
 
-/// ライフ残ありでゲームオーバーではない
+/// deathTimer タイムアウト時、ライフ2 → Playing に遷移
 @Test
-def testIsGameOverFalse(): Unit \ Assert =
-    Assert.assertFalse(Game.isGameOver(testState()))
+def testDeathTimerTimeoutRespawn(): Unit \ Assert =
+    let state = testState();
+    let state1 = { deathTimer = Timer.start(state#deathTimer), phase = GamePhase.Dying, lives = 2 | state };
+    let state2 = Game.processTimers(2.1f32, state1);
+    let updated = Game.handleTimerTimeouts(state2);
+    Assert.assertEq(expected = GamePhase.Playing, updated#phase)
 
 /// buildState で初期状態が構築される
 @Test
 def testBuildState(): Unit \ Assert =
     let state = testState();
-    Assert.assertEq(expected = (3, false), (state#lives, state#isDead))
+    Assert.assertEq(expected = (3, GamePhase.Playing), (state#lives, state#phase))
 
 // ========================================================================
 // Timer の初期値
@@ -728,7 +758,7 @@ def testPlayerProcessInputNone(): Unit \ Assert =
 @Test
 def testPlayerProcessInputIgnoredWhenDead(): Unit \ Assert =
     let state = testState();
-    let deadState = { isDead = true | state };
+    let deadState = { phase = GamePhase.Dying | state };
     let processed = run Game.handlePlayerInput(deadState) with handler Engine.Game {
         def render(_, k) = k(())
         def shouldClose(k) = k(false)
