@@ -360,16 +360,7 @@ def testSceneProcessAll(): Unit \ Assert =
     let scene = Scene.empty()
         |> Scene.addNode("root", tnode(0.0f32, 0.0f32))
         |> Scene.addChild("root", "a", tnode(1.0f32, 0.0f32))
-        |> (sc -> run Scene.processAll(0.016f64, false, sc) with handler Engine.Game {
-            def render(_, k) = k(())
-            def shouldClose(k) = k(false)
-            def getDeltaTime(k) = k(0.016f32)
-            def isKeyPressed(_, k) = k(false)
-            def getFontAtlas(_, k) = k({
-                textureName = "test", fontSize = 32.0f32,
-                textureSize = 512.0f32, glyphs = Map.empty()
-            })
-        });
+        |> Scene.processAll(0.016f64, false);
     Assert.assertEq(expected = Some(tnode(1.0f32, 0.0f32)), Scene.getAt("root" :: "a" :: Nil, scene))
 
 // ========================================================================

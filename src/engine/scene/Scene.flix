@@ -355,7 +355,7 @@ pub mod Scene {
 
     /// 全ノードの process を preorder（親→子）の順で呼び出す
     /// 初回呼び出し時は自動で readyAll を実行する
-    pub def processAll(delta: Float64, paused: Bool, scene: Scene[n]): Scene[n] \ Engine.Game with Node[n] =
+    pub def processAll(delta: Float64, paused: Bool, scene: Scene[n]): Scene[n] with Node[n] =
         let scene1 = if (not isReady(scene)) readyAll(scene) else scene;
         foldNodes((node, path, sc) ->
             if (ProcessMode.shouldProcess(paused, Node.getProcessMode(node)))

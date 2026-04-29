@@ -40,9 +40,9 @@ pub enum GameNode {
 
 instance Node[GameNode] {
     redef process(delta: Float64, self: GameNode, _path: NodePath,
-                    scene: Scene[GameNode]): (GameNode, Scene[GameNode]) \ Engine.Game =
+                    scene: Scene[GameNode]): (GameNode, Scene[GameNode]) =
         let dt = Float64.truncateToFloat32(delta);
-        checked_ecast(match self {
+        match self {
             // Player: moveToward 物理のみ（入力は handlePlayerInput で処理）
             case GameNode.Player(r) =>
                 let currentPos = Node2D.getPosition(r#body);
@@ -72,7 +72,7 @@ instance Node[GameNode] {
             case GameNode.AnimSpriteNode(sprite) =>
                 (GameNode.AnimSpriteNode(AnimatedSprite2D.advanceFrame(dt, sprite)), scene)
             case _ => (self, scene)
-        })
+        }
 }
 
 // ── AreaHandler 実装 ──

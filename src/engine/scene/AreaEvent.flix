@@ -97,7 +97,7 @@ pub mod AreaEvent {
     // ========================================================================
 
     /// Scene.processAll + 重なりイベント発火を一括で行う。
-    pub def processAndEmit(delta: Float64, paused: Bool, scene: Scene[n]): Scene[n] \ OnAreaEvent + Engine.Game with CollisionObject2D[n], Node[n] =
+    pub def processAndEmit(delta: Float64, paused: Bool, scene: Scene[n]): Scene[n] \ OnAreaEvent with CollisionObject2D[n], Node[n] =
         let updated = Scene.processAll(delta, paused, scene);
         emitOverlapEvents(updated);
         updated
@@ -116,7 +116,7 @@ pub mod AreaEvent {
     /// Scene.processAll + 重なり検出 + AreaHandler.onAreaEntered / onAreaExited ディスパッチ。
     /// Scene 内の prevOverlaps を読み書きし、離脱したペアに onAreaExited を発火する。
     pub def processAndEmitHandled(delta: Float64, paused: Bool,
-                                  scene: Scene[n]): Scene[n] \ Engine.Game
+                                  scene: Scene[n]): Scene[n]
             with CollisionObject2D[n], Node[n], AreaHandler[n] =
         let prevOverlaps = Scene.getPrevOverlaps(scene);
         let updated = Scene.processAll(delta, paused, scene);

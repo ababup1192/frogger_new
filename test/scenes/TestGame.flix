@@ -175,7 +175,7 @@ def testPlayerProcessMovesTowardTarget(): Unit \ Assert =
             GameNode.Player({target = {x = 384.0f32, y = 768.0f32} | r})
         case other => other
     }, scene);
-    let processed = withMockEngine(() -> Scene.processAll(0.1, false, scene1));
+    let processed = Scene.processAll(0.1, false, scene1);
     let pos = Scene.globalPosition("player", processed);
     Assert.assertEq(expected = (384.0f32, 780.8f32), vecToTuple(pos))
 
@@ -183,7 +183,7 @@ def testPlayerProcessMovesTowardTarget(): Unit \ Assert =
 @Test
 def testPlayerProcessStaysAtTarget(): Unit \ Assert =
     let scene = testScene();
-    let processed = withMockEngine(() -> Scene.processAll(0.1, false, scene));
+    let processed = Scene.processAll(0.1, false, scene);
     let pos = Scene.globalPosition("player", processed);
     Assert.assertEq(expected = (384.0f32, 832.0f32), vecToTuple(pos))
 
@@ -195,7 +195,7 @@ def testPlayerProcessStaysAtTarget(): Unit \ Assert =
 @Test
 def testAnimSpriteAdvancesFrame(): Unit \ Assert =
     let scene = testScene();
-    let processed = withMockEngine(() -> Scene.processAll(0.3, false, scene));
+    let processed = Scene.processAll(0.3, false, scene);
     match Scene.getAt("player" :: "Sprite" :: Nil, processed) {
         case Some(GameNode.AnimSpriteNode(sprite)) =>
             Assert.assertEq(expected = "FroggerLeap", AnimatedSprite2D.currentTexture(sprite))
@@ -211,7 +211,7 @@ def testAnimSpriteAdvancesFrame(): Unit \ Assert =
 def testVehicleProcessMoves(): Unit \ Assert =
     let scene = testScene();
     let origPos = Scene.globalPosition("v0_0", scene);
-    let processed = withMockEngine(() -> Scene.processAll(0.1, false, scene));
+    let processed = Scene.processAll(0.1, false, scene);
     let newPos = Scene.globalPosition("v0_0", processed);
     Assert.assertEq(
         expected = (origPos#x - 20.0f32, origPos#y),
@@ -222,7 +222,7 @@ def testVehicleProcessMoves(): Unit \ Assert =
 def testVehicleWrapsLeft(): Unit \ Assert =
     let scene = testScene()
         |> Scene.setGlobalPosition("v0_0", {x = -99.0f32, y = 512.0f32});
-    let processed = withMockEngine(() -> Scene.processAll(0.1, false, scene));
+    let processed = Scene.processAll(0.1, false, scene);
     let newPos = Scene.globalPosition("v0_0", processed);
     Assert.assertEq(expected = Game.screenW() + 100.0f32, newPos#x)
 
@@ -236,7 +236,7 @@ def testLogProcessMoves(): Unit \ Assert =
     let scene = testScene();
     let origPos = Scene.globalPosition("l0_0", scene);
     // Lane 0: vx=120, dt=0.1 → +12px
-    let processed = withMockEngine(() -> Scene.processAll(0.1, false, scene));
+    let processed = Scene.processAll(0.1, false, scene);
     let newPos = Scene.globalPosition("l0_0", processed);
     Assert.assertEq(
         expected = (origPos#x + 12.0f32, origPos#y),
@@ -280,7 +280,7 @@ def testTurtleProcessMoves(): Unit \ Assert =
     let scene = testScene();
     let origPos = Scene.globalPosition("t0_0", scene);
     // Lane 0: vx=100, dt=0.1 → +10px
-    let processed = withMockEngine(() -> Scene.processAll(0.1, false, scene));
+    let processed = Scene.processAll(0.1, false, scene);
     let newPos = Scene.globalPosition("t0_0", processed);
     Assert.assertEq(
         expected = (origPos#x + 10.0f32, origPos#y),
