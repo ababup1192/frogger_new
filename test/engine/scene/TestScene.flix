@@ -337,10 +337,10 @@ def testSceneNodeCount(): Unit \ Assert =
     Assert.assertEq(expected = 3, Scene.nodeCount(scene))
 
 // ========================================================================
-// processAll（初回で自動 ready → preorder 順で実行される）
+// processAll（preorder 順で実行される）
 // ========================================================================
 
-/// processAll は初回呼び出しで自動 ready し、エラーなく全ノードを走査できる
+/// processAll はエラーなく全ノードを走査できる
 @Test
 def testSceneProcessAll(): Unit \ Assert =
     let scene = Scene.empty()

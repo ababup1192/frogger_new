@@ -13,7 +13,6 @@ pub enum SceneEntry[s] {
 pub enum Scene[s] {
     case Scene({
         nodes = Map[NodeName, SceneEntry[s]],
-        readied = Bool,
         prevOverlaps = OverlapPairSet
     })
 }
@@ -28,16 +27,6 @@ pub mod Scene {
     def roots(scene: Scene[s]): Map[NodeName, SceneEntry[s]] =
         let Scene.Scene(r) = scene;
         r#nodes
-
-    /// readied フラグを取り出す
-    def isReady(scene: Scene[s]): Bool =
-        let Scene.Scene(r) = scene;
-        r#readied
-
-    /// readied=true でシーンを再構築する
-    def markReady(scene: Scene[s]): Scene[s] =
-        let Scene.Scene(r) = scene;
-        Scene.Scene({ readied = true | r })
 
     /// 前フレームの重なりペアセットを取り出す
     pub def getPrevOverlaps(scene: Scene[s]): OverlapPairSet =
@@ -133,7 +122,7 @@ pub mod Scene {
 
     /// 空のシーンを返す
     pub def empty(): Scene[s] =
-        Scene.Scene({ nodes = Map.empty(), readied = false, prevOverlaps = Set.empty() })
+        Scene.Scene({ nodes = Map.empty(), prevOverlaps = Set.empty() })
 
     /// ルートノードとして追加する（state は EngineNode[s] 内に含まれる）
     pub def addNode(name: NodeName, engineNode: EngineNode[s], scene: Scene[s]): Scene[s] =
@@ -358,16 +347,9 @@ pub mod Scene {
             Ref.get(sceneRef)
         }
 
-    /// 全ノードの ready を preorder（親→子）の順で呼び出し、readied フラグを立てる
-    def readyAll(scene: Scene[s]): Scene[s] with Node[s] =
-        foldNodes((engineNode, path, sc) -> Node.ready(engineNode, path, sc), scene)
-            |> markReady
-
     /// 全ノードの process を preorder（親→子）の順で呼び出す
-    /// 初回呼び出し時は自動で readyAll を実行する
     /// EngineNode.engineProcess（AnimSprite2D のフレーム送り等）も自動実行される
     pub def processAll(delta: Float64, paused: Bool, scene: Scene[s]): Scene[s] with Node[s] =
-        let scene1 = if (not isReady(scene)) readyAll(scene) else scene;
         let dt = Float64.truncateToFloat32(delta);
         foldNodes((engineNode, path, sc) ->
             if (ProcessMode.shouldProcess(paused, Node.getProcessMode(EngineNode.getState(engineNode)))) {
@@ -375,7 +357,7 @@ pub mod Scene {
                 Node.process(delta, newEn, path, sc)
             } else
                 (engineNode, sc),
-            scene1)
+            scene)
 
     // ========================================================================
     // 描画（制約なし — EngineNode の Renderable を直接使用）
