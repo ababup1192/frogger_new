@@ -105,13 +105,13 @@ try { ... } catch {
 
 **修正**: 型注釈を付ける（例: `(Nil: List[Int32])`）、または要素付きで初期化。
 
-### 9. NodeKind のパターンマッチ不一致
+### 9. GameNode の trait 委譲で型が合わない
 
-**症状**: SceneTree の Node 操作で型エラー
+**症状**: `CanvasItem[GameNode]` 等の instance 実装で型エラー
 
-**原因**: `NodeKind` の case と実際のデータ型が不一致
+**原因**: `match` の分岐で内部型（`Area2D`, `Sprite2D`）への委譲が正しくない
 
-**修正**: `SceneTree.flix` の `NodeKind` enum を確認して正しい case とデータ型を使う。
+**修正**: `SpriteNode` と Area2D 系で分岐し、ヘルパー関数（`getArea`, `mapArea`）で内部型に委譲する。`CollisionObject2D` では `SpriteNode` に `None` / `false` を返す。
 
 ### 10. Float32 リテラルのサフィックス忘れ
 

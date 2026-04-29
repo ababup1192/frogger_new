@@ -26,8 +26,8 @@ devbox run -- java -jar bin/flix.jar build
 | タイミング | スキル |
 |---|---|
 | Flix コードを新規作成・修正する前 | `/flix-docs` |
-| Scene / Game / Node を触る前 | `/engine-guide` |
-| 新しい Scene を追加するとき | `/new-scene` |
+| GameNode / Scene / GameEngine を触る前 | `/engine-guide` |
+| GameNode を拡張・新しいゲームを作るとき | `/scene-pattern` |
 | コンパイルエラーが解決しないとき | `/compile-fix` |
 | 外部 JAR を追加するとき | `/add-jar` |
 | コードレビューするとき | `/review-checklist` |
