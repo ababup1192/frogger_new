@@ -92,40 +92,19 @@ instance Node[GameNode] {
             // Vehicle: 水平方向に移動し、画面外でラップ
             case GameNode.Vehicle(r) =>
                 let pos = Node2D.getPosition(r#area);
-                let newX = pos#x + r#vx * dt;
-                let wrappedX =
-                    if (r#vx < 0.0f32 and newX < -100.0f32)
-                        Game.screenW() + 100.0f32
-                    else if (r#vx > 0.0f32 and newX > Game.screenW() + 100.0f32)
-                        -100.0f32
-                    else
-                        newX;
+                let wrappedX = Game.wrapX(r#vx, pos#x + r#vx * dt);
                 let newArea = Node2D.setPosition({x = wrappedX, y = pos#y}, r#area);
                 (GameNode.Vehicle({area = newArea | r}), scene)
             // LogPlatform: Vehicle と同じ移動＋ラップ
             case GameNode.LogPlatform(r) =>
                 let pos = Node2D.getPosition(r#area);
-                let newX = pos#x + r#vx * dt;
-                let wrappedX =
-                    if (r#vx < 0.0f32 and newX < -100.0f32)
-                        Game.screenW() + 100.0f32
-                    else if (r#vx > 0.0f32 and newX > Game.screenW() + 100.0f32)
-                        -100.0f32
-                    else
-                        newX;
+                let wrappedX = Game.wrapX(r#vx, pos#x + r#vx * dt);
                 let newArea = Node2D.setPosition({x = wrappedX, y = pos#y}, r#area);
                 (GameNode.LogPlatform({area = newArea | r}), scene)
             // TurtlePlatform: LogPlatform と同じ移動＋ラップ
             case GameNode.TurtlePlatform(r) =>
                 let pos = Node2D.getPosition(r#area);
-                let newX = pos#x + r#vx * dt;
-                let wrappedX =
-                    if (r#vx < 0.0f32 and newX < -100.0f32)
-                        Game.screenW() + 100.0f32
-                    else if (r#vx > 0.0f32 and newX > Game.screenW() + 100.0f32)
-                        -100.0f32
-                    else
-                        newX;
+                let wrappedX = Game.wrapX(r#vx, pos#x + r#vx * dt);
                 let newArea = Node2D.setPosition({x = wrappedX, y = pos#y}, r#area);
                 (GameNode.TurtlePlatform({area = newArea | r}), scene)
             // AnimSpriteNode: フレームを進める
@@ -426,6 +405,19 @@ mod Game {
         }))
 
     // ========================================================================
+    // 移動ヘルパー
+    // ========================================================================
+
+    /// 水平方向に移動した X 座標を画面外でラップする
+    pub def wrapX(vx: Float32, newX: Float32): Float32 =
+        if (vx < 0.0f32 and newX < -100.0f32)
+            screenW() + 100.0f32
+        else if (vx > 0.0f32 and newX > screenW() + 100.0f32)
+            -100.0f32
+        else
+            newX
+
+    // ========================================================================
     // 車両生成
     // ========================================================================
 
@@ -663,33 +655,23 @@ mod Game {
             match result {
                 case None => state
                 case Some((_idx, slotName, _dist)) =>
-                    let scene1 = Scene.mapAt(slotName :: Nil, node -> match node {
+                    Scene.mapAt(slotName :: Nil, node -> match node {
                         case GameNode.HomeSlot(r) =>
                             GameNode.HomeSlot({filled = true | r})
                         case other => other
-                    }, state);
-                    let scene2 = Scene.mapAt(slotName :: "sprite" :: Nil, node -> match node {
-                        case GameNode.SpriteNode(sprite) =>
-                            GameNode.SpriteNode(Sprite2D.setTexture("HomeFrog", sprite))
-                        case other => other
-                    }, scene1);
-                    let scene3 = Scene.mapAt("player" :: Nil, node -> match node {
-                        case GameNode.Player(r) =>
-                            GameNode.Player({body = Node2D.setPosition(playerStart(), r#body) | r})
-                        case other => other
-                    }, scene2);
-                    let scene4 = Scene.mapAt("playerTarget" :: Nil, node -> match node {
-                        case GameNode.Marker2DNode(m) =>
-                            GameNode.Marker2DNode(Node2D.setPosition(playerStart(), m))
-                        case other => other
-                    }, scene3);
-                    // ゲームタイマーをリスタート
-                    let scene5 = Scene.mapAt("gameTimer" :: Nil, node -> match node {
-                        case GameNode.TimerNode(r) =>
-                            GameNode.TimerNode({timer = Timer.start(r#timer) | r})
-                        case other => other
-                    }, scene4);
-                    scene5
+                    }, state)
+                        |> Scene.mapAt(slotName :: "sprite" :: Nil, node -> match node {
+                            case GameNode.SpriteNode(sprite) =>
+                                GameNode.SpriteNode(Sprite2D.setTexture("HomeFrog", sprite))
+                            case other => other
+                        })
+                        |> resetPlayerPosition
+                        // ゲームタイマーをリスタート
+                        |> Scene.mapAt("gameTimer" :: Nil, node -> match node {
+                            case GameNode.TimerNode(r) =>
+                                GameNode.TimerNode({timer = Timer.start(r#timer) | r})
+                            case other => other
+                        })
             }
         }
 
@@ -807,6 +789,12 @@ mod Game {
     // 死亡判定
     // ========================================================================
 
+    /// 死亡演出を開始する（アニメーション変更 + deathTimer 開始 + isDead フラグ設定）
+    pub def triggerDeath(color: Color, scene: Scene[GameNode]): Scene[GameNode] =
+        playDeathAnim(color, scene)
+            |> startDeathTimer
+            |> mapGameManager(r -> {isDead = true | r})
+
     pub def playDeathAnim(color: Color, scene: Scene[GameNode]): Scene[GameNode] =
         Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
             case GameNode.AnimSpriteNode(sprite) =>
@@ -829,12 +817,9 @@ mod Game {
         match Scene.getAt("player" :: "Sprite" :: Nil, state) {
             case Some(GameNode.AnimSpriteNode(sprite)) =>
                 let color = CanvasItem.getModulate(sprite);
-                if (color#g < 0.5f32 and not getGameManager(state)#isDead) {
-                    let newScene = playDeathAnim({r = 1.0f32, g = 0.2f32, b = 0.2f32}, state)
-                        |> startDeathTimer
-                        |> mapGameManager(r -> {isDead = true | r});
-                    newScene
-                } else
+                if (color#g < 0.5f32 and not getGameManager(state)#isDead)
+                    triggerDeath({r = 1.0f32, g = 0.2f32, b = 0.2f32}, state)
+                else
                     state
             case _ => state
         }
@@ -850,10 +835,7 @@ mod Game {
                 match findPlatformVelocity(state) {
                     case Some(_) => state
                     case None =>
-                        let newScene = playDeathAnim({r = 0.2f32, g = 0.2f32, b = 1.0f32}, state)
-                            |> startDeathTimer
-                            |> mapGameManager(r -> {isDead = true | r});
-                        newScene
+                        triggerDeath({r = 0.2f32, g = 0.2f32, b = 1.0f32}, state)
                 }
             } else
                 state
@@ -863,34 +845,37 @@ mod Game {
     // 死亡タイマー・リスポーン・ゲームタイマー
     // ========================================================================
 
-    /// シーン変更のみのリスポーン（位置・アニメリセット、gameTimer 再開）
-    /// Scene[GameNode] の変更は applyTimeouts 側で行う
-    pub def respawnPlayerScene(scene: Scene[GameNode]): Scene[GameNode] =
-        let scene1 = Scene.mapAt("player" :: Nil, node -> match node {
+    /// プレイヤーとターゲットの位置をスタート地点にリセットする
+    pub def resetPlayerPosition(scene: Scene[GameNode]): Scene[GameNode] =
+        Scene.mapAt("player" :: Nil, node -> match node {
             case GameNode.Player(r) =>
                 GameNode.Player({body = Node2D.setPosition(playerStart(), r#body) | r})
             case other => other
-        }, scene);
-        let scene1b = Scene.mapAt("playerTarget" :: Nil, node -> match node {
-            case GameNode.Marker2DNode(m) =>
-                GameNode.Marker2DNode(Node2D.setPosition(playerStart(), m))
-            case other => other
-        }, scene1);
-        let scene2 = Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
-            case GameNode.AnimSpriteNode(sprite) =>
-                GameNode.AnimSpriteNode(
-                    sprite
-                        |> AnimatedSprite2D.play("idle")
-                        |> CanvasItem.setModulate({r = 1.0f32, g = 1.0f32, b = 1.0f32})
-                        |> Node2D.setRotation(0.0))
-            case other => other
-        }, scene1b);
-        // ゲームタイマーをリスタート
-        Scene.mapAt("gameTimer" :: Nil, node -> match node {
-            case GameNode.TimerNode(r) =>
-                GameNode.TimerNode({timer = Timer.start(r#timer) | r})
-            case other => other
-        }, scene2)
+        }, scene)
+            |> Scene.mapAt("playerTarget" :: Nil, node -> match node {
+                case GameNode.Marker2DNode(m) =>
+                    GameNode.Marker2DNode(Node2D.setPosition(playerStart(), m))
+                case other => other
+            })
+
+    /// シーン変更のみのリスポーン（位置・アニメリセット、gameTimer 再開）
+    /// Scene[GameNode] の変更は applyTimeouts 側で行う
+    pub def respawnPlayerScene(scene: Scene[GameNode]): Scene[GameNode] =
+        resetPlayerPosition(scene)
+            |> Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
+                case GameNode.AnimSpriteNode(sprite) =>
+                    GameNode.AnimSpriteNode(
+                        sprite
+                            |> AnimatedSprite2D.play("idle")
+                            |> CanvasItem.setModulate({r = 1.0f32, g = 1.0f32, b = 1.0f32})
+                            |> Node2D.setRotation(0.0))
+                case other => other
+            })
+            |> Scene.mapAt("gameTimer" :: Nil, node -> match node {
+                case GameNode.TimerNode(r) =>
+                    GameNode.TimerNode({timer = Timer.start(r#timer) | r})
+                case other => other
+            })
 
     /// TimerHandler によるタイムアウト処理を適用し、Scene[GameNode] を更新する
     pub def applyTimeouts(state: Scene[GameNode]): Scene[GameNode] =
