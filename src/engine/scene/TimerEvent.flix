@@ -15,7 +15,7 @@ pub mod TimerEvent {
         /// timerPath: タイマーノードのパス
         /// timer: タイマーノードの実体
         /// scene: 現在のシーン
-        pub def onTimeout(timerPath: NodePath, timer: n, scene: Scene[n]): Scene[n] = scene
+        pub def onTimeout(_timerPath: NodePath, _timer: n, scene: Scene[n]): Scene[n] = scene
     }
 
     /// timedOut=true のノードパスを収集する

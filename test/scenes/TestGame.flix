@@ -545,12 +545,12 @@ def testAllHomesFilledWin(): Unit \ Assert =
     Assert.assertTrue(Game.allHomesFilled(scene1))
 
 // ========================================================================
-// updateDeathTimer: 死亡タイマーとリスポーン
+// applyTimeouts: 死亡タイマーとリスポーン
 // ========================================================================
 
-/// 死亡中に deathTimer の process で timeLeft が減少する
+/// 死亡中に deathTimer の process で timeLeft が減少し、タイムアウト前は isDead のまま
 @Test
-def testUpdateDeathTimerDecreases(): Unit \ Assert =
+def testApplyTimeoutsDeathTimerNotExpired(): Unit \ Assert =
     let state = Game.initGameState(testFontAtlas());
     // deathTimer を手動開始して process で 0.5s 進める
     let scene1 = Scene.mapAt("deathTimer" :: Nil, node -> match node {
@@ -559,23 +559,22 @@ def testUpdateDeathTimerDecreases(): Unit \ Assert =
         case other => other
     }, state#scene);
     let scene2 = Scene.processAll(0.5, false, scene1);
-    let updated = Game.updateDeathTimer({isDead = true, scene = scene2 | state});
-    // Timer は process 済みなので updateDeathTimer 自体は timeLeft を読むだけ
-    // 0.5s 後の timeLeft: 2.0 - 0.5 = 1.5（まだ running）
+    let updated = Game.applyTimeouts({isDead = true, scene = scene2 | state});
+    // 0.5s 後の timeLeft: 2.0 - 0.5 = 1.5（まだ running、timedOut=false）
     Assert.assertTrue(updated#isDead)
 
 /// タイマーが 0 以下になるとリスポーンする（isDead=false, ライフ -1）
 @Test
-def testUpdateDeathTimerRespawns(): Unit \ Assert =
+def testApplyTimeoutsDeathTimerRespawns(): Unit \ Assert =
     let state = Game.initGameState(testFontAtlas());
-    // deathTimer を手動開始し、大きな dt で process して timeLeft を 0 以下にする
+    // deathTimer を手動開始し、大きな dt で process して timedOut=true にする
     let scene1 = Scene.mapAt("deathTimer" :: Nil, node -> match node {
         case GameNode.TimerNode(timer) =>
             GameNode.TimerNode(Timer.start(timer))
         case other => other
     }, state#scene);
     let scene2 = Scene.processAll(2.1, false, scene1);
-    let updated = Game.updateDeathTimer({isDead = true, scene = scene2 | state});
+    let updated = Game.applyTimeouts({isDead = true, scene = scene2 | state});
     Assert.assertEq(
         expected = (false, 2),
         (updated#isDead, updated#lives))
@@ -590,7 +589,7 @@ def testRespawnResetsPosition(): Unit \ Assert =
         case other => other
     }, state#scene);
     let scene2 = Scene.processAll(2.1, false, scene1);
-    let updated = Game.updateDeathTimer({isDead = true, scene = scene2 | state});
+    let updated = Game.applyTimeouts({isDead = true, scene = scene2 | state});
     let pos = Scene.globalPosition("player", updated#scene);
     Assert.assertEq(expected = (384.0f32, 832.0f32), (pos#x, pos#y))
 
@@ -604,27 +603,27 @@ def testRespawnResetsAnimation(): Unit \ Assert =
         case other => other
     }, state#scene);
     let scene2 = Scene.processAll(2.1, false, scene1);
-    let updated = Game.updateDeathTimer({isDead = true, scene = scene2 | state});
+    let updated = Game.applyTimeouts({isDead = true, scene = scene2 | state});
     match Scene.getAt("player" :: "Sprite" :: Nil, updated#scene) {
         case Some(GameNode.AnimSpriteNode(sprite)) =>
             Assert.assertEq(expected = "idle", AnimatedSprite2D.getCurrentAnimation(sprite))
         case _ => bug!("player Sprite not found after respawn")
     }
 
-/// 死亡していないときは updateDeathTimer は何もしない
+/// タイマーがタイムアウトしていないときは applyTimeouts は何もしない
 @Test
-def testUpdateDeathTimerNoOpWhenAlive(): Unit \ Assert =
+def testApplyTimeoutsNoOpWhenNoTimeout(): Unit \ Assert =
     let state = Game.initGameState(testFontAtlas());
-    let updated = Game.updateDeathTimer(state);
+    let updated = Game.applyTimeouts(state);
     Assert.assertFalse(updated#isDead)
 
 // ========================================================================
-// updateGameTimer: ゲームタイマー
+// applyTimeouts: ゲームタイマー
 // ========================================================================
 
 /// ゲームタイマーが process で減少する
 @Test
-def testUpdateGameTimerDecreases(): Unit \ Assert =
+def testGameTimerDecreases(): Unit \ Assert =
     let state = Game.initGameState(testFontAtlas());
     // gameTimer は autostart=true なので readyAll 後は running
     let scene1 = Scene.readyAll(state#scene);
@@ -636,24 +635,65 @@ def testUpdateGameTimerDecreases(): Unit \ Assert =
         case _ => bug!("gameTimer not found")
     }
 
-/// タイマーが 0 以下になると死亡する
+/// ゲームタイマーが 0 以下になると applyTimeouts で isDead=true になる
 @Test
-def testUpdateGameTimerDeath(): Unit \ Assert =
+def testApplyTimeoutsGameTimerDeath(): Unit \ Assert =
     let state = Game.initGameState(testFontAtlas());
     // gameTimer を短い waitTime の Timer に置き換えて開始
     let shortTimer = Timer.make(0.5f32) |> Timer.setAutostart(true) |> Timer.ready;
     let scene1 = Scene.set("gameTimer", GameNode.TimerNode(shortTimer), state#scene);
     let scene2 = Scene.processAll(1.0, false, scene1);
-    let updated = Game.updateGameTimer({scene = scene2 | state});
+    let updated = Game.applyTimeouts({scene = scene2 | state});
     Assert.assertTrue(updated#isDead)
 
-/// 死亡中はゲームタイマーで追加死亡が発生しない（updateGameTimer は isDead で早期リターン）
+/// 既に isDead=true のときゲームタイマーの timedOut は追加死亡しない
 @Test
-def testUpdateGameTimerPausedWhenDead(): Unit \ Assert =
+def testApplyTimeoutsGameTimerSkipsWhenDead(): Unit \ Assert =
     let state = Game.initGameState(testFontAtlas());
-    let updated = Game.updateGameTimer({isDead = true | state});
+    let updated = Game.applyTimeouts({isDead = true | state});
     // isDead=true のまま（追加の状態変更なし）
     Assert.assertTrue(updated#isDead)
+
+// ========================================================================
+// Timer timedOut フラグ
+// ========================================================================
+
+/// Timer.process でタイムアウトすると timedOut=true になる
+@Test
+def testTimerTimedOutFlag(): Unit \ Assert =
+    let timer = Timer.make(1.0f32) |> Timer.start;
+    let processed = Timer.process(1.5f32, timer);
+    Assert.assertTrue(Timer.isTimedOut(processed))
+
+/// Timer.process でタイムアウトしなければ timedOut=false のまま
+@Test
+def testTimerNotTimedOut(): Unit \ Assert =
+    let timer = Timer.make(2.0f32) |> Timer.start;
+    let processed = Timer.process(0.5f32, timer);
+    Assert.assertFalse(Timer.isTimedOut(processed))
+
+/// Timer.clearTimedOut でフラグがクリアされる
+@Test
+def testTimerClearTimedOut(): Unit \ Assert =
+    let timer = Timer.make(1.0f32) |> Timer.start;
+    let processed = Timer.process(1.5f32, timer);
+    let cleared = Timer.clearTimedOut(processed);
+    Assert.assertFalse(Timer.isTimedOut(cleared))
+
+/// handleTimeouts 後に timedOut フラグがクリアされる
+@Test
+def testHandleTimeoutsClearsFlag(): Unit \ Assert =
+    let state = Game.initGameState(testFontAtlas());
+    let shortTimer = Timer.make(0.5f32) |> Timer.setAutostart(true) |> Timer.ready;
+    let scene1 = Scene.set("gameTimer", GameNode.TimerNode(shortTimer), state#scene);
+    let scene2 = Scene.processAll(1.0, false, scene1);
+    // processAll 後は timedOut=true のはず
+    let timedOutPaths = TimerEvent.detectTimeoutPaths(scene2);
+    let hasGameTimer = List.exists(p -> p == "gameTimer" :: Nil, timedOutPaths);
+    // handleTimeouts で処理・クリア
+    let scene3 = TimerEvent.handleTimeouts(scene2);
+    let afterPaths = TimerEvent.detectTimeoutPaths(scene3);
+    Assert.assertEq(expected = (true, Nil), (hasGameTimer, afterPaths))
 
 // ========================================================================
 // isGameOver / resetGame

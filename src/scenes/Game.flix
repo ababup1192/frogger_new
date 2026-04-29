@@ -109,7 +109,7 @@ instance Node[GameNode] {
 // ── TimerHandler 実装 ──
 
 instance TimerEvent.TimerHandler[GameNode] {
-    pub def onTimeout(timerPath: NodePath, _timer: GameNode, scene: Scene[GameNode]): Scene[GameNode] =
+    redef onTimeout(timerPath: NodePath, _timer: GameNode, scene: Scene[GameNode]): Scene[GameNode] =
         match List.head(timerPath) {
             case Some("gameTimer") =>
                 // deathTimer が既に動いていれば何もしない（衝突死亡中）
@@ -800,7 +800,7 @@ mod Game {
     // 死亡判定
     // ========================================================================
 
-    def playDeathAnim(color: Color, scene: Scene[GameNode]): Scene[GameNode] =
+    pub def playDeathAnim(color: Color, scene: Scene[GameNode]): Scene[GameNode] =
         Scene.mapAt("player" :: "Sprite" :: Nil, node -> match node {
             case GameNode.AnimSpriteNode(sprite) =>
                 GameNode.AnimSpriteNode(
@@ -811,7 +811,7 @@ mod Game {
         }, scene)
 
     /// deathTimer を開始するヘルパー
-    def startDeathTimer(scene: Scene[GameNode]): Scene[GameNode] =
+    pub def startDeathTimer(scene: Scene[GameNode]): Scene[GameNode] =
         Scene.mapAt("deathTimer" :: Nil, node -> match node {
             case GameNode.TimerNode(timer) =>
                 GameNode.TimerNode(Timer.start(timer))
@@ -854,12 +854,14 @@ mod Game {
     // 死亡タイマー・リスポーン・ゲームタイマー
     // ========================================================================
 
-    def respawnPlayer(state: GameState): GameState =
+    /// シーン変更のみのリスポーン（位置・アニメリセット、gameTimer 再開）
+    /// GameState の変更は applyTimeouts 側で行う
+    pub def respawnPlayerScene(scene: Scene[GameNode]): Scene[GameNode] =
         let scene1 = Scene.mapAt("player" :: Nil, node -> match node {
             case GameNode.Player(r) =>
                 GameNode.Player({body = Node2D.setPosition(playerStart(), r#body)})
             case other => other
-        }, state#scene);
+        }, scene);
         let scene1b = Scene.mapAt("playerTarget" :: Nil, node -> match node {
             case GameNode.Marker2DNode(m) =>
                 GameNode.Marker2DNode(Node2D.setPosition(playerStart(), m))
@@ -875,49 +877,25 @@ mod Game {
             case other => other
         }, scene1b);
         // ゲームタイマーをリスタート
-        let scene3 = Scene.mapAt("gameTimer" :: Nil, node -> match node {
+        Scene.mapAt("gameTimer" :: Nil, node -> match node {
             case GameNode.TimerNode(timer) =>
                 GameNode.TimerNode(Timer.start(timer))
             case other => other
-        }, scene2);
-        {
-            scene = scene3,
-            isDead = false,
-            lives = state#lives - 1
-            | state
-        }
+        }, scene2)
 
-    /// 死亡タイマーを更新し、タイマー切れでリスポーンする
-    /// Timer ノードの process が dt を減算するため、dt パラメータ不要
-    pub def updateDeathTimer(state: GameState): GameState =
-        if (not state#isDead) state
-        else {
-            match Scene.get("deathTimer", state#scene) {
-                case Some(GameNode.TimerNode(timer)) =>
-                    if (Timer.getTimeLeft(timer) <= 0.0f32 and Timer.isStopped(timer))
-                        respawnPlayer(state)
-                    else
-                        state
-                case _ => state
-            }
-        }
-
-    /// ゲームタイマーを更新し、タイマー切れで死亡する
-    /// Timer ノードの process が dt を減算するため、dt パラメータ不要
-    pub def updateGameTimer(state: GameState): GameState =
-        if (state#isDead) state
-        else {
-            match Scene.get("gameTimer", state#scene) {
-                case Some(GameNode.TimerNode(timer)) =>
-                    if (Timer.getTimeLeft(timer) <= 0.0f32 and Timer.isStopped(timer)) {
-                        let newScene = playDeathAnim({r = 1.0f32, g = 1.0f32, b = 0.2f32}, state#scene)
-                            |> startDeathTimer;
-                        {isDead = true, scene = newScene | state}
-                    } else
-                        state
-                case _ => state
-            }
-        }
+    /// TimerHandler によるタイムアウト処理を適用し、GameState を更新する
+    pub def applyTimeouts(state: GameState): GameState =
+        let timedOutPaths = TimerEvent.detectTimeoutPaths(state#scene);
+        let newScene = TimerEvent.handleTimeouts(state#scene);
+        let state1 = {scene = newScene | state};
+        List.foldLeft((acc, path) -> match path {
+            case "gameTimer" :: Nil =>
+                if (acc#isDead) acc
+                else {isDead = true | acc}
+            case "deathTimer" :: Nil =>
+                {isDead = false, lives = acc#lives - 1 | acc}
+            case _ => acc
+        }, state1, timedOutPaths)
 
     pub def isGameOver(state: GameState): Bool =
         state#lives <= 0

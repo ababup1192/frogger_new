@@ -63,7 +63,7 @@ def gameLoop(fontAtlas: FontAtlas, state: Game.GameState): Unit \ Engine.Game =
                 let (newScene, newOverlaps) =
                     GameEngine.updateWithAreaHandler(dt, false, state#prevOverlaps, state#scene);
                 let finalState = {scene = newScene, prevKeys = currKeys, prevOverlaps = newOverlaps | state}
-                    |> Game.updateDeathTimer
+                    |> Game.applyTimeouts
                     |> Game.updateHUD;
                 gameLoop(fontAtlas, finalState)
             } else {
@@ -77,7 +77,7 @@ def gameLoop(fontAtlas: FontAtlas, state: Game.GameState): Unit \ Engine.Game =
                     |> Game.tryFillHomeSlot
                     |> Game.checkDeath
                     |> Game.checkDrown
-                    |> Game.updateGameTimer
+                    |> Game.applyTimeouts
                     |> Game.updateHUD;
                 gameLoop(fontAtlas, finalState)
             }
