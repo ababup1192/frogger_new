@@ -104,6 +104,9 @@ instance CanvasItem[Sprite2D] {
     pub def getModulate(sprite: Sprite2D): Color =
         let Sprite2D.Sprite2D(r) = sprite;
         r#modulate
+    pub def setModulate(color: Color, sprite: Sprite2D): Sprite2D =
+        let Sprite2D.Sprite2D(r) = sprite;
+        Sprite2D.Sprite2D({ modulate = color | r })
     pub def getZIndex(sprite: Sprite2D): Int32 =
         let Sprite2D.Sprite2D(r) = sprite;
         r#zIndex

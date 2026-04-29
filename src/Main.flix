@@ -4,20 +4,23 @@ def main(): Unit \ IO =
         let config: Engine.EngineConfig = {
             screenWidth = 800,
             screenHeight = 600,
-            title = "Sprite2D Sample",
+            title = "Area2D Overlap Demo",
             textureManifest =
-                {name = "frog", path = "textures/FroggerIdle.png", hasAlpha = true} :: Nil,
+                {name = "frog", path = "textures/FroggerIdle.png", hasAlpha = true} ::
+                {name = "turtle", path = "textures/Turtle_01.png", hasAlpha = true} :: Nil,
             clearColor = {r = 0.2f32, g = 0.3f32, b = 0.3f32}
         };
         LwjglLayer.withLwjgl(config, () -> {
-            let scene = SampleScene.buildScene() |> Scene.readyAll;
-            gameLoop(scene)
+            let scene = Game.buildScene() |> Scene.readyAll;
+            gameLoop(Set.empty(), scene)
         })
     }
 
-def gameLoop(scene: Scene[GameNode]): Unit \ Engine.Game =
+/// メインループ: AreaHandler 方式で更新。衝突応答は GameNode 側に定義済み。
+def gameLoop(prevOverlaps: OverlapPairSet, scene: Scene[GameNode]): Unit \ Engine.Game =
     if (Engine.Game.shouldClose()) ()
     else {
-        GameEngine.update(Engine.Game.getDeltaTime(), false, scene) 
-        |> gameLoop
+        let delta = Engine.Game.getDeltaTime();
+        let (newScene, newOverlaps) = GameEngine.updateWithAreaHandler(delta, false, prevOverlaps, scene);
+        gameLoop(newOverlaps, newScene)
     }

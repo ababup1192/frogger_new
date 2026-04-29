@@ -9,22 +9,24 @@ pub trait Node[n] with Order[n] {
 
     // ── Scene アクセス ──
 
-    /// シーンから自分を名前で取得する
-    pub def getSelf(name: NodeName, scene: Scene[n]): Option[n]
+    /// シーンからパスで自分を取得する
+    pub def getSelf(path: NodePath, scene: Scene[n]): Option[n] =
+            Scene.getAt(path, scene)
 
-    /// シーンに自分の状態を書き戻す
-    pub def setSelf(name: NodeName, self: n, scene: Scene[n]): Scene[n]
+    /// シーンにパスで自分の状態を書き戻す
+    pub def setSelf(path: NodePath, self: n, scene: Scene[n]): Scene[n] =
+            Scene.setAt(path, self, scene)
 
     // ── ライフサイクル ──
 
     /// シーン構築後に一度だけ呼ばれる初期化コールバック
     /// 他ノードへの参照取得や初期状態の計算に使う
-    pub def ready(self: n, _name: NodeName, scene: Scene[n]): (n, Scene[n]) =
+    pub def ready(self: n, _path: NodePath, scene: Scene[n]): (n, Scene[n]) =
             (self, scene)
 
     /// 毎フレーム呼ばれる更新コールバック
     /// delta: 前フレームからの経過秒数（Float64）
-    pub def process(_delta: Float64, self: n, _name: NodeName, scene: Scene[n]): (n, Scene[n]) =
+    pub def process(_delta: Float64, self: n, _path: NodePath, scene: Scene[n]): (n, Scene[n]) =
             (self, scene)
 
     // ── ポーズ制御 ──

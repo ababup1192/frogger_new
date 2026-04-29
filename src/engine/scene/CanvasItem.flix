@@ -11,6 +11,7 @@ pub trait CanvasItem[a] {
 
     // 描画色（乗算）
     pub def getModulate(node: a): Color
+    pub def setModulate(color: Color, node: a): a
 
     // デフォルト実装
     pub def show(node: a): a = CanvasItem.setVisible(true, node)

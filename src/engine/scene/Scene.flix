@@ -1,19 +1,17 @@
 pub type alias NodeName = String
+pub type alias NodePath = List[NodeName]
 
-/// ノードエントリ: ノード本体 + 親子関係を保持する
-pub type alias SceneEntry[n] = {
-    node = n,
-    parent = Option[NodeName],
-    children = List[NodeName]
+/// ノードエントリ: ノード本体 + 子ノードを再帰的に内包する
+pub enum SceneEntry[n] {
+    case SceneEntry({
+        node = n,
+        children = Map[NodeName, SceneEntry[n]]
+    })
 }
 
-/// シーン: フラット Map でノードを管理しつつ、各エントリに親子参照を持たせる。
-/// roots にツリーのルートノード名を保持する。
+/// シーン: ルートノードのみを Map で保持し、各 SceneEntry が子を再帰的に内包する
 pub enum Scene[n] {
-    case Scene({
-        entries = Map[NodeName, SceneEntry[n]],
-        roots = List[NodeName]
-    })
+    case Scene(Map[NodeName, SceneEntry[n]])
 }
 
 pub mod Scene {
@@ -22,39 +20,91 @@ pub mod Scene {
     // 内部ヘルパー
     // ========================================================================
 
-    /// Scene の entries マップを取り出す
-    def entries(scene: Scene[n]): Map[NodeName, SceneEntry[n]] =
-        let Scene.Scene(r) = scene;
-        r#entries
+    /// Scene のルート Map を取り出す
+    def roots(scene: Scene[n]): Map[NodeName, SceneEntry[n]] =
+        let Scene.Scene(m) = scene;
+        m
 
-    /// Scene の roots リストを取り出す
-    def getRoots(scene: Scene[n]): List[NodeName] =
-        let Scene.Scene(r) = scene;
-        r#roots
+    /// SceneEntry のノードを取り出す
+    def entryNode(entry: SceneEntry[n]): n =
+        let SceneEntry.SceneEntry(r) = entry;
+        r#node
 
-    /// entries を差し替えた新しい Scene を返す
-    def withEntries(newEntries: Map[NodeName, SceneEntry[n]], scene: Scene[n]): Scene[n] =
-        let Scene.Scene(r) = scene;
-        Scene.Scene({ entries = newEntries | r })
+    /// SceneEntry の children を取り出す
+    def entryChildren(entry: SceneEntry[n]): Map[NodeName, SceneEntry[n]] =
+        let SceneEntry.SceneEntry(r) = entry;
+        r#children
 
-    /// 指定ノードから深さ優先（preorder）で名前リストを返す
-    def preorderFrom(name: NodeName, entryMap: Map[NodeName, SceneEntry[n]]): List[NodeName] =
-        match Map.get(name, entryMap) {
-            case None       => Nil
-            case Some(entry) =>
-                name :: List.flatMap(child -> preorderFrom(child, entryMap), entry#children)
+    /// パスをたどって SceneEntry を取得
+    def getEntryAt(path: NodePath, scene: Scene[n]): Option[SceneEntry[n]] =
+        match path {
+            case Nil => None
+            case name :: rest =>
+                Map.get(name, roots(scene))
+                    |> Option.flatMap(entry -> getEntryIn(rest, entry))
         }
 
-    /// 指定ノードとその子孫を entries から再帰的に削除する。
-    /// 親の children リストは更新しない（呼び出し元で処理する）。
-    def removeSubtree(name: NodeName, sceneRef: Ref[Scene[n], rc]): Unit \ rc with Order[n] =
-        match Map.get(name, entries(Ref.get(sceneRef))) {
-            case None => ()
-            case Some(entry) =>
-                List.forEach(child -> removeSubtree(child, sceneRef), entry#children);
-                let scene = Ref.get(sceneRef);
-                Ref.put(withEntries(Map.remove(name, entries(scene)), scene), sceneRef)
+    /// SceneEntry 内のパスをたどって子孫の SceneEntry を取得
+    def getEntryIn(path: NodePath, entry: SceneEntry[n]): Option[SceneEntry[n]] =
+        match path {
+            case Nil => Some(entry)
+            case name :: rest =>
+                Map.get(name, entryChildren(entry))
+                    |> Option.flatMap(child -> getEntryIn(rest, child))
         }
+
+    /// パスをたどってノード値を取得
+    pub def getAt(path: NodePath, scene: Scene[n]): Option[n] =
+        getEntryAt(path, scene) |> Option.map(entryNode)
+
+    // ========================================================================
+    // ツリー変換（高階関数によるパス走査の共通化）
+    // ========================================================================
+
+    /// SceneEntry 内のパスをたどり、末端のエントリに f を適用して再構築する
+    def modifyEntryIn(path: NodePath, f: SceneEntry[n] -> SceneEntry[n],
+                      entry: SceneEntry[n]): SceneEntry[n] =
+        let SceneEntry.SceneEntry(r) = entry;
+        match path {
+            case Nil => f(entry)
+            case name :: rest =>
+                match Map.get(name, r#children) {
+                    case None => entry
+                    case Some(child) =>
+                        let updatedChild = modifyEntryIn(rest, f, child);
+                        SceneEntry.SceneEntry({ children = Map.insert(name, updatedChild, r#children) | r })
+                }
+        }
+
+    /// パスで指定されたエントリに f を適用し、Scene を再構築する
+    def modifyAt(path: NodePath, f: SceneEntry[n] -> SceneEntry[n],
+                 scene: Scene[n]): Scene[n] =
+        match path {
+            case Nil => scene
+            case rootName :: rest =>
+                match Map.get(rootName, roots(scene)) {
+                    case None => scene
+                    case Some(rootEntry) =>
+                        let updated = modifyEntryIn(rest, f, rootEntry);
+                        Scene.Scene(Map.insert(rootName, updated, roots(scene)))
+                }
+        }
+
+    /// パスの末尾を除いた親パスを返す（List.dropRight(1) の代替）
+    def initPath(path: NodePath): NodePath =
+        match List.reverse(path) {
+            case Nil => Nil
+            case _ :: rest => List.reverse(rest)
+        }
+
+    /// SceneEntry から深さ優先（preorder）でパスリストを返す
+    def preorderFromEntry(prefix: NodePath, entry: SceneEntry[n]): List[NodePath] =
+        let myPath = prefix;
+        let childPaths = Map.foldLeftWithKey((acc, childName, childEntry) ->
+            List.append(acc, preorderFromEntry(List.append(prefix, childName :: Nil), childEntry)),
+            Nil,
+            entryChildren(entry));
+        myPath :: childPaths
 
     // ========================================================================
     // 基本操作（既存 API 互換）
@@ -62,176 +112,248 @@ pub mod Scene {
 
     /// 空のシーンを返す
     pub def empty(): Scene[n] =
-        Scene.Scene({ entries = Map.empty(), roots = Nil })
+        Scene.Scene(Map.empty())
 
-    /// ルートノードとして追加する。
-    /// 同名のノードが既にある場合は上書きされる。
+    /// ルートノードとして追加する
     pub def addNode(name: NodeName, node: n, scene: Scene[n]): Scene[n] with Order[n] =
-        let entry: SceneEntry[n] = { node = node, parent = None, children = Nil };
-        let newEntries = Map.insert(name, entry, entries(scene));
-        let newRoots = if (List.exists(r -> r == name, getRoots(scene)))
-                           getRoots(scene)
-                       else
-                           List.append(getRoots(scene), name :: Nil);
-        Scene.Scene({ entries = newEntries, roots = newRoots })
+        let entry = SceneEntry.SceneEntry({ node = node, children = Map.empty() });
+        Scene.Scene(Map.insert(name, entry, roots(scene)))
 
-    /// ノードの値を取得する（O(log n)）
-    pub def get(name: NodeName, scene: Scene[n]): Option[n] with Order[n] =
-        Map.get(name, entries(scene)) |> Option.map(entry -> entry#node)
-
-    /// ノードの値を更新する。ツリー構造（親子関係）は変更しない。
-    pub def set(name: NodeName, node: n, scene: Scene[n]): Scene[n] with Order[n] =
-        match Map.get(name, entries(scene)) {
-            case None        => scene
-            case Some(entry) =>
-                let updated = { node = node | entry };
-                Map.insert(name, updated, entries(scene))
-                    |> flip -> withEntries(flip, scene)
-        }
-
-    /// ノードを削除する。子ノードも再帰的に削除し、親の children リストからも除去する。
-    pub def remove(name: NodeName, scene: Scene[n]): Scene[n] with Order[n] =
-        match Map.get(name, entries(scene)) {
-            case None => scene
-            case Some(entry) =>
-                region rc {
-                    let sceneRef = Ref.fresh(rc, scene);
-                    // 子孫を再帰的に entries から削除
-                    List.forEach(child -> removeSubtree(child, sceneRef), entry#children);
-                    // 自身を entries から削除
-                    let s1 = Ref.get(sceneRef);
-                    let s2 = withEntries(Map.remove(name, entries(s1)), s1);
-                    // 親の children リストから自分を除去
-                    match entry#parent {
-                        case None =>
-                            let newRoots = List.filter(rootName -> rootName != name, getRoots(s2));
-                            let Scene.Scene(rec) = s2;
-                            Scene.Scene({ roots = newRoots | rec })
-                        case Some(parentName) =>
-                            match Map.get(parentName, entries(s2)) {
-                                case None => s2
-                                case Some(parentEntry) =>
-                                    let newChildren = List.filter(c -> c != name, parentEntry#children);
-                                    let updatedParent = { children = newChildren | parentEntry };
-                                    withEntries(Map.insert(parentName, updatedParent, entries(s2)), s2)
-                            }
-                    }
-                }
-        }
-
-    /// 後方互換: 全ノードを Map[NodeName, n] として返す
-    pub def nodes(scene: Scene[n]): Map[NodeName, n] =
-        Map.map(entry -> entry#node, entries(scene))
-
-    // ========================================================================
-    // ツリー操作（新規）
-    // ========================================================================
-
-    /// 親ノードの子としてノードを追加する。
-    /// 親が存在しない場合はシーンをそのまま返す。
+    /// 親がルートの子追加（既存互換）
     pub def addChild(parentName: NodeName, childName: NodeName, node: n, scene: Scene[n]): Scene[n] with Order[n] =
-        match Map.get(parentName, entries(scene)) {
+        addChildAt(parentName :: Nil, childName, node, scene)
+
+    /// 任意深さの子追加
+    pub def addChildAt(parentPath: NodePath, childName: NodeName, node: n, scene: Scene[n]): Scene[n] with Order[n] =
+        match getEntryAt(parentPath, scene) {
             case None => scene
-            case Some(parentEntry) =>
-                let childEntry: SceneEntry[n] = { node = node, parent = Some(parentName), children = Nil };
-                let updatedParent = { children = List.append(parentEntry#children, childName :: Nil) | parentEntry };
-                entries(scene)
-                    |> Map.insert(childName, childEntry)
-                    |> Map.insert(parentName, updatedParent)
-                    |> flip -> withEntries(flip, scene)
+            case Some(_) =>
+                let childEntry = SceneEntry.SceneEntry({ node = node, children = Map.empty() });
+                modifyAt(parentPath, entry ->
+                    let SceneEntry.SceneEntry(r) = entry;
+                    SceneEntry.SceneEntry({ children = Map.insert(childName, childEntry, r#children) | r }),
+                    scene)
         }
 
-    /// 指定ノードの親の名前を返す
-    pub def getParent(name: NodeName, scene: Scene[n]): Option[NodeName] =
-        Map.get(name, entries(scene)) |> Option.flatMap(entry -> entry#parent)
+    /// パスをたどってノード値を更新
+    pub def setAt(path: NodePath, node: n, scene: Scene[n]): Scene[n] =
+        modifyAt(path, entry ->
+            let SceneEntry.SceneEntry(r) = entry;
+            SceneEntry.SceneEntry({ node = node | r }),
+            scene)
 
-    /// 指定ノードの子の名前リストを返す
+    /// ルート取得（既存互換）
+    pub def get(name: NodeName, scene: Scene[n]): Option[n] =
+        getAt(name :: Nil, scene)
+
+    /// ルート更新（既存互換）
+    pub def set(name: NodeName, node: n, scene: Scene[n]): Scene[n] =
+        setAt(name :: Nil, node, scene)
+
+    /// ルート削除（既存互換）
+    pub def remove(name: NodeName, scene: Scene[n]): Scene[n] =
+        removeAt(name :: Nil, scene)
+
+    /// パスで削除
+    pub def removeAt(path: NodePath, scene: Scene[n]): Scene[n] =
+        match List.reverse(path) {
+            case Nil => scene
+            case childName :: Nil =>
+                Scene.Scene(Map.remove(childName, roots(scene)))
+            case childName :: parentRev =>
+                modifyAt(List.reverse(parentRev), entry ->
+                    let SceneEntry.SceneEntry(r) = entry;
+                    SceneEntry.SceneEntry({ children = Map.remove(childName, r#children) | r }),
+                    scene)
+        }
+
+    /// 後方互換: ルートノードを Map[NodeName, n] として返す
+    pub def nodes(scene: Scene[n]): Map[NodeName, n] =
+        Map.map(entryNode, roots(scene))
+
+    /// 全ノード数（ツリー全体の再帰カウント）
+    pub def nodeCount(scene: Scene[n]): Int32 =
+        Map.foldLeft((acc, entry) -> acc + countEntry(entry), 0, roots(scene))
+
+    /// SceneEntry のノード数（自分 + 子孫）
+    def countEntry(entry: SceneEntry[n]): Int32 =
+        1 + Map.foldLeft((acc, child) -> acc + countEntry(child), 0, entryChildren(entry))
+
+    // ========================================================================
+    // ツリー操作
+    // ========================================================================
+
+    /// ルートの子名リスト
     pub def getChildren(name: NodeName, scene: Scene[n]): List[NodeName] =
-        match Map.get(name, entries(scene)) {
-            case None        => Nil
-            case Some(entry) => entry#children
+        getChildrenAt(name :: Nil, scene)
+
+    /// 任意ノードの子名リスト
+    pub def getChildrenAt(path: NodePath, scene: Scene[n]): List[NodeName] =
+        match getEntryAt(path, scene) {
+            case None => Nil
+            case Some(entry) => Map.keysOf(entryChildren(entry)) |> Set.toList
         }
 
-    // ========================================================================
-    // 座標（新規）
-    // ========================================================================
-
-    /// 祖先の位置を合算したグローバル座標を返す。
-    /// parent チェーンを辿り、各ノードの position を加算する。
-    pub def globalPosition(name: NodeName, scene: Scene[n]): Vec2.Vec2 with Node2D[n], Order[n] =
-        match Map.get(name, entries(scene)) {
-            case None        => Vec2.zero()
-            case Some(entry) =>
-                let localPos = Node2D.getPosition(entry#node);
-                match entry#parent {
-                    case None            => localPos
-                    case Some(parentName) => Vec2.add(localPos, globalPosition(parentName, scene))
+    /// パスから親パスを返す
+    pub def getParent(path: NodePath, scene: Scene[n]): Option[NodePath] =
+        match path {
+            case Nil => None
+            case _ :: Nil =>
+                // ルートノード → 親はいない
+                // ただし、そのルートが存在するか確認
+                match getEntryAt(path, scene) {
+                    case None => None
+                    case Some(_) => None
                 }
-        }
-
-    /// グローバル座標を指定して、ローカル座標を逆算して設定する。
-    /// globalPos - 親のグローバル座標 = 新しいローカル座標
-    pub def setGlobalPosition(name: NodeName, globalPos: Vec2.Vec2, scene: Scene[n]): Scene[n] with Node2D[n], Order[n] =
-        match Map.get(name, entries(scene)) {
-            case None => scene
-            case Some(entry) =>
-                let parentGlobal = match entry#parent {
-                    case None            => Vec2.zero()
-                    case Some(parentName) => globalPosition(parentName, scene)
-                };
-                let newLocal = Vec2.sub(globalPos, parentGlobal);
-                let updatedNode = Node2D.setPosition(newLocal, entry#node);
-                let updatedEntry = { node = updatedNode | entry };
-                Map.insert(name, updatedEntry, entries(scene))
-                    |> flip -> withEntries(flip, scene)
+            case _ =>
+                let pp = initPath(path);
+                match getEntryAt(pp, scene) {
+                    case None => None
+                    case Some(_) => Some(pp)
+                }
         }
 
     // ========================================================================
     // 走査順序
     // ========================================================================
 
-    /// ツリーを preorder（深さ優先・親が先）で走査した名前リストを返す
-    pub def preorderNames(scene: Scene[n]): List[NodeName] =
-        let entryMap = entries(scene);
-        List.flatMap(root -> preorderFrom(root, entryMap), getRoots(scene))
+    /// 全ノードのパスを深さ優先順（preorder）で返す
+    pub def preorderPaths(scene: Scene[n]): List[NodePath] =
+        Map.foldLeftWithKey((acc, name, entry) ->
+            List.append(acc, preorderFromEntry(name :: Nil, entry)),
+            Nil,
+            roots(scene))
+
+    // ========================================================================
+    // 座標
+    // ========================================================================
+
+    /// パスでグローバル座標を計算
+    pub def globalPositionAt(path: NodePath, scene: Scene[n]): Vec2.Vec2 with Node2D[n] =
+        match path {
+            case Nil => Vec2.zero()
+            case name :: Nil =>
+                match getAt(name :: Nil, scene) {
+                    case None => Vec2.zero()
+                    case Some(node) => Node2D.getPosition(node)
+                }
+            case _ =>
+                match getAt(path, scene) {
+                    case None => Vec2.zero()
+                    case Some(node) =>
+                        let localPos = Node2D.getPosition(node);
+                        Vec2.add(localPos, globalPositionAt(initPath(path), scene))
+                }
+        }
+
+    /// ルートのグローバル座標（後方互換）
+    pub def globalPosition(name: NodeName, scene: Scene[n]): Vec2.Vec2 with Node2D[n] =
+        globalPositionAt(name :: Nil, scene)
+
+    /// パスでグローバル座標を設定（ローカル座標を逆算）
+    pub def setGlobalPositionAt(path: NodePath, globalPos: Vec2.Vec2, scene: Scene[n]): Scene[n] with Node2D[n] =
+        match getAt(path, scene) {
+            case None => scene
+            case Some(node) =>
+                let pp = initPath(path);
+                let parentGlobal = if (List.length(pp) == 0)
+                                       Vec2.zero()
+                                   else
+                                       globalPositionAt(pp, scene);
+                let newLocal = Vec2.sub(globalPos, parentGlobal);
+                let updatedNode = Node2D.setPosition(newLocal, node);
+                setAt(path, updatedNode, scene)
+        }
+
+    /// ルートノードのグローバル座標設定（後方互換）
+    pub def setGlobalPosition(name: NodeName, globalPos: Vec2.Vec2, scene: Scene[n]): Scene[n] with Node2D[n] =
+        setGlobalPositionAt(name :: Nil, globalPos, scene)
+
+    // ========================================================================
+    // type-based 子ノード更新（GameNode 専用）
+    // ========================================================================
+
+    /// 親パス配下の最初の SpriteNode を探し f を適用する
+    pub def updateSpriteChild(parentPath: NodePath, f: Sprite2D -> Sprite2D, scene: Scene[GameNode]): Scene[GameNode] =
+        match getEntryAt(parentPath, scene) {
+            case None => scene
+            case Some(parentEntry) =>
+                match Map.findLeft((_, childEntry) -> match entryNode(childEntry) {
+                    case GameNode.SpriteNode(_) => true
+                    case _ => false
+                }, entryChildren(parentEntry)) {
+                    case Some((childName, _)) =>
+                        let childPath = List.append(parentPath, childName :: Nil);
+                        match getAt(childPath, scene) {
+                            case Some(GameNode.SpriteNode(sprite)) =>
+                                setAt(childPath, GameNode.SpriteNode(f(sprite)), scene)
+                            case _ => scene
+                        }
+                    case None => scene
+                }
+        }
 
     // ========================================================================
     // ライフサイクル
     // ========================================================================
 
-    /// 全ノードの ready を preorder（親→子）の順で呼び出す
-    pub def readyAll(scene: Scene[n]): Scene[n] with Node[n] =
-        let names = preorderNames(scene);
+    /// 全ノードを preorder で走査し、変換関数を順次適用する（Region で状態をスレッドする）
+    def foldNodes(f: (n, NodePath, Scene[n]) -> (n, Scene[n]),
+                  scene: Scene[n]): Scene[n] =
+        let paths = preorderPaths(scene);
         region rc {
             let sceneRef = Ref.fresh(rc, scene);
-            List.forEach(name -> {
-                match get(name, Ref.get(sceneRef)) {
+            List.forEach(path -> {
+                match getAt(path, Ref.get(sceneRef)) {
                     case None => ()
                     case Some(current) =>
-                        let (updated, s1) = Node.ready(current, name, Ref.get(sceneRef));
-                        Ref.put(set(name, updated, s1), sceneRef)
+                        let (updated, s1) = f(current, path, Ref.get(sceneRef));
+                        Ref.put(setAt(path, updated, s1), sceneRef)
                 }
-            }, names);
+            }, paths);
             Ref.get(sceneRef)
         }
 
+    /// 全ノードの ready を preorder（親→子）の順で呼び出す
+    pub def readyAll(scene: Scene[n]): Scene[n] with Node[n] =
+        foldNodes((node, path, sc) -> Node.ready(node, path, sc), scene)
+
     /// 全ノードの process を preorder（親→子）の順で呼び出す
     pub def processAll(delta: Float64, paused: Bool, scene: Scene[n]): Scene[n] with Node[n] =
-        let names = preorderNames(scene);
-        region rc {
-            let sceneRef = Ref.fresh(rc, scene);
-            List.forEach(name -> {
-                match get(name, Ref.get(sceneRef)) {
-                    case None => ()
-                    case Some(current) =>
-                        let mode = Node.getProcessMode(current);
-                        if (ProcessMode.shouldProcess(paused, mode))
-                            let (updated, s1) = Node.process(delta, current, name, Ref.get(sceneRef));
-                            Ref.put(set(name, updated, s1), sceneRef)
-                        else
-                            ()
-                }
-            }, names);
-            Ref.get(sceneRef)
+        foldNodes((node, path, sc) ->
+            if (ProcessMode.shouldProcess(paused, Node.getProcessMode(node)))
+                Node.process(delta, node, path, sc)
+            else
+                (node, sc),
+            scene)
+
+    // ========================================================================
+    // 描画
+    // ========================================================================
+
+    /// Node2D / CanvasItem のプロパティから Drawable を組み立てる
+    pub def toDrawable(texture: String, node: n, globalPos: Vec2.Vec2): Engine.Drawable with Node2D[n] =
+        {
+            texture = texture,
+            position = globalPos,
+            scale = Node2D.getScale(node),
+            rotation = Float64.truncateToFloat32(Node2D.getRotation(node)),
+            color = CanvasItem.getModulate(node),
+            centered = true,
+            uvOffset = {x = 0.0f32, y = 0.0f32},
+            uvScale = {x = 1.0f32, y = 1.0f32},
+            zIndex = CanvasItem.getZIndex(node)
         }
+
+    /// 可視ノードを Drawable のリストに変換する
+    pub def toDrawables(scene: Scene[n]): List[Engine.Drawable] with Node2D[n], Order[n], Engine.Renderable[n] =
+        preorderPaths(scene)
+            |> List.filterMap(path ->
+                getAt(path, scene) |> Option.flatMap(node ->
+                    if (CanvasItem.isVisible(node))
+                        Some(Engine.Renderable.toDrawable(node, globalPositionAt(path, scene)))
+                    else None
+                )
+            )
+            |> List.sortBy(d -> d#zIndex)
 }

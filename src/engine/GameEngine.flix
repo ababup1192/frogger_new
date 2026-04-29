@@ -10,21 +10,30 @@ mod GameEngine {
         render(processedScene);
         processedScene
 
-    /// 描画: globalPosition で座標解決、zIndex でソート、Renderable で Drawable 変換
+    /// 1 フレーム分の更新（Area2D 衝突検出付き）:
+    /// processAndEmit → OnAreaEvent → render
+    ///
+    /// OnAreaEvent ハンドラは呼び出し元で提供する。
+    pub def updateWithAreaEvents(delta: Float32, paused: Bool, scene: Scene[n]): Scene[n] \ {Engine.Game, OnAreaEvent}
+            with Node[n], CollisionObject2D[n], Engine.Renderable[n] =
+        let processedScene = AreaEvent.processAndEmit(Float32.toFloat64(delta), paused, scene);
+        render(processedScene);
+        processedScene
+
+    /// 1 フレーム分の更新（AreaHandler 方式）:
+    /// processAndEmitHandled → render
+    ///
+    /// OnAreaEvent ハンドラ不要。ノード型の AreaHandler instance で衝突応答する。
+    /// prevOverlaps に前フレームのペアセットを渡すと、離脱イベントも発火される。
+    pub def updateWithAreaHandler(delta: Float32, paused: Bool, prevOverlaps: OverlapPairSet,
+                                  scene: Scene[n]): (Scene[n], OverlapPairSet) \ Engine.Game
+            with Node[n], CollisionObject2D[n], AreaHandler[n], Engine.Renderable[n] =
+        let (processedScene, currentOverlaps) = AreaEvent.processAndEmitHandled(Float32.toFloat64(delta), paused, prevOverlaps, scene);
+        render(processedScene);
+        (processedScene, currentOverlaps)
+
+    /// 描画: Scene.toDrawables で Drawable リストを取得し、描画する
     pub def render(scene: Scene[n]): Unit \ Engine.Game
             with Node2D[n], Order[n], Engine.Renderable[n] =
-        let drawables =
-            Scene.preorderNames(scene)
-            |> List.filterMap(name ->
-                match Scene.get(name, scene) {
-                    case None => None
-                    case Some(node) =>
-                        if (CanvasItem.isVisible(node)) {
-                            let gPos = Scene.globalPosition(name, scene);
-                            Some(Engine.Renderable.toDrawable(node, gPos))
-                        } else None
-                }
-            )
-            |> List.sortBy(d -> d#zIndex);
-        Engine.Game.render(drawables)
+        Scene.toDrawables(scene) |> Engine.Game.render
 }
